@@ -86,12 +86,11 @@ struct madcap_ops {
 	int		(*mco_udp_cfg) (struct net_device *dev,
 					struct madcap_obj *obj);
 
-	struct madcap_obj_entry *
-	(*mco_llt_entry_dump) (struct net_device *dev,
-			       struct netlink_callback *cb);
+	struct madcap_obj *(*mco_llt_entry_dump) (struct net_device *dev,
+						  struct netlink_callback *cb);
 
-	struct madcap_obj * (*mco_llt_config_get) (struct net_device *dev);
-	struct madcap_obj * (*mco_udp_config_get) (struct net_device *dev);
+	struct madcap_obj *(*mco_llt_config_get) (struct net_device *dev);
+	struct madcap_obj *(*mco_udp_config_get) (struct net_device *dev);
 };
 
 
@@ -114,8 +113,8 @@ int madcap_llt_entry_del (struct net_device *dev, struct madcap_obj *obj);
 int madcap_udp_cfg (struct net_device *dev, struct madcap_obj *obj);
 
 /* entry dump skb and cb is generic netlink. */
-struct madcap_obj_entry *  madcap_llt_entry_dump (struct net_device *dev,
-						  struct netlink_callback *cb);
+struct madcap_obj *  madcap_llt_entry_dump (struct net_device *dev,
+					    struct netlink_callback *cb);
 
 struct madcap_obj * madcap_llt_config_get (struct net_device *dev);
 struct madcap_obj * madcap_udp_config_get (struct net_device *dev);

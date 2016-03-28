@@ -525,7 +525,7 @@ static struct madcap_obj *
 raven_llt_config_get (struct net_device *dev)
 {
 	struct raven_dev *rdev = netdev_priv (dev);
-	return (struct madcap_obj *)(&rdev->oc);
+	return MADCAP_OBJ (rdev->oc);
 }
 
 static int
@@ -559,7 +559,7 @@ raven_llt_entry_del (struct net_device *dev, struct madcap_obj *obj)
 	return 0;
 }
 
-static struct madcap_obj_entry *
+static struct madcap_obj *
 raven_llt_entry_dump (struct net_device *dev, struct netlink_callback *cb)
 {
 	int idx, cnt;
@@ -585,7 +585,7 @@ raven_llt_entry_dump (struct net_device *dev, struct netlink_callback *cb)
 
 out:
 	cb->args[0] = cnt + 1;
-	return oe;
+	return MADCAP_OBJ (*oe);
 }
 
 static int

@@ -131,7 +131,7 @@ __MADCAP_GET_DEFUN(udp_config_get);
 
 
 
-struct madcap_obj_entry *
+struct madcap_obj *
 madcap_llt_entry_dump (struct net_device *dev, struct netlink_callback *cb)
 {
 	struct madcap_ops *mc_ops;
@@ -381,6 +381,7 @@ madcap_nl_cmd_llt_entry_dump (struct sk_buff *skb, struct netlink_callback *cb)
 	struct nlattr *attrs[MADCAP_ATTR_MAX + 1];
 	struct net *net = sock_net (skb->sk);
 	struct madcap_net *madnet = net_generic (net, madcap_net_id);
+	struct madcap_obj *obj;
 	struct madcap_obj_entry *obj_ent;
 
 	/* XXX: kernel 4.0 later, use genlmsg_parse() */
@@ -410,10 +411,8 @@ madcap_nl_cmd_llt_entry_dump (struct sk_buff *skb, struct netlink_callback *cb)
 			continue;
 		}
 
-		obj_ent = madcap_llt_entry_dump (madnet->dev[n], cb);
-		send_ifindex = madnet->dev[n]->ifindex;
-
-		if (obj_ent == NULL) {
+		obj = madcap_llt_entry_dump (madnet->dev[n], cb);
+		if (obj == NULL) {
 			/* next device */
 			cnt = 0;
 			n = -1;
@@ -424,6 +423,9 @@ madcap_nl_cmd_llt_entry_dump (struct sk_buff *skb, struct netlink_callback *cb)
 			obj_ent = NULL;
 			continue;
 		}
+
+		obj_ent = MADCAP_OBJ_ENTRY (obj);
+		send_ifindex = madnet->dev[n]->ifindex;
 
 		break;
 	}

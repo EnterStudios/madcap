@@ -1,4 +1,5 @@
 
+#include <linux/etherdevice.h>
 
 #include "sfmc.h"
 
@@ -204,6 +205,35 @@ extract_id_from_packet (struct sk_buff *skb, struct madcap_obj_config *oc)
 	return id;
 }
 
+
+static inline u16
+ipchecksum(const void * data, u16 len, u32 sum)
+{
+	const u8 *addr = data;
+	u32 i;
+
+	/* Checksum all the pairs of bytes first... */
+	for (i = 0; i < (len & ~1U); i += 2) {
+		sum += (u16)ntohs(*((u16 *)(addr + i)));
+		if (sum > 0xFFFF)
+			sum -= 0xFFFF;
+	}
+	/*
+         * If there's a single byte left over, checksum it, too.
+         * Network byte order is big-endian, so the remaining byte is
+         * the high byte.
+         */
+
+	if (i < len) {
+		sum += addr[i] << 8;
+		if (sum > 0xFFFF)
+			sum -= 0xFFFF;
+	}
+
+	sum = ~sum & 0xFFFF;
+	return htons (sum);
+}
+
 static int
 sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 {
@@ -211,6 +241,12 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	__u64 id;
 	struct sfmc *sfmc = netdv_get_sfmc (dev);
 	struct sfmc_table *st;
+	struct sfmc_fib *sf;
+	struct iphdr *iph;
+	struct udphdr *uh;
+	struct ethhdr *eth;
+	patricia_node_t *pn;
+	prefix_t prefix;
 
 	id = extract_id_from_packet (skb, &sfmc->oc);
 	st = sfmc_table_find (sfmc, id);
@@ -222,10 +258,52 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 		return -ENOENT;
 
 	/* encap udp */
+	if (sfmc->ou.encap_enable) {
+
+		uh = (struct udphdr *) __skb_push (skb, sizeof (*uh));
+		skb_reset_transport_header (skb);
+		uh->dest	= sfmc->ou.dst_port;
+		uh->source	= sfmc->ou.src_port;
+		uh->len		= htons (skb->len);
+		uh->check	= 0;	/* XXX */
+	}
 
 	/* encap ip */
+	iph = skb_push (skb, sizeof (*iph));
+	skb_reset_network_header (skb);
+
+	iph->version	= 4;
+	iph->ihl	= sizeof (*iph) >> 2;
+	iph->frag_off	= 0;
+	iph->id		= 0;
+	iph->protocol	= sfmc->oc.proto;
+	iph->tos	= 0;
+	iph->ttl	= 64;
+	iph->daddr	= st->oe.dst;
+	iph->saddr	= sfmc->oc.src;
+	iph->check	= ipchecksum (skb->data, sizeof (*iph), 0);
 
 	/* arp resolve and set ethernet header */
-		
+	dst2prefix (st->oe.dst, 32, &prefix);
+	pn = patricia_search_best (sfmc->fib_tree, &prefix);
+	if (!pn)
+		return -ENOENT;
+	sf = (struct sfmc_fib *) pn->data;
+
+	if (!ARP_STATE_XMITABLE(sf))
+		return -ENOENT;
+
+#define maccopy(a, b)					\
+	do {						\
+		b[0] = a[0]; b[1] = a[1]; b[2] = a[2];	\
+		b[3] = a[3]; b[4] = a[4]; b[5] = a[5];	\
+	} while (0)
+
+	eth = skb_push (skb, sizeof (*eth));
+	skb_reset_mac_header (skb);
+	maccopy (sf->mac, eth->h_dest);
+	maccopy (dev->perm_addr, eth->h_source);
+	eth->h_proto = htons (ETH_P_IP);
+
 	return 0;
 }

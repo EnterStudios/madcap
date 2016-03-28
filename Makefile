@@ -6,12 +6,13 @@ OVBENCH?=no
 flag_ovbench_yes = -DOVBENCH
 flag_ovbench_no =
 
-obj-y := madcap/ raven/ \
-	protocol-drivers-3.19.0/gre/	\
-	protocol-drivers-3.19.0/ipip/	\
-	protocol-drivers-3.19.0/vxlan/	\
-	protocol-drivers-3.19.0/nsh/	\
-	netdevgen/
+kernel_version=$(shell uname -r | cut -d '-' -f 1)
+
+obj-y := madcap/ raven/ netdevgen/	\
+	protocol-drivers-$(kernel_version)/gre/		\
+	protocol-drivers-$(kernel_version)/ipip/	\
+	protocol-drivers-$(kernel_version)/vxlan/	\
+	protocol-drivers-$(kernel_version)/nsh/		\
 
 subdir-ccflags-y := -I$(src)/include $(flag_ovbench_$(OVBENCH))
 

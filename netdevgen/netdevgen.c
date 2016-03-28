@@ -3,6 +3,7 @@
  */
 
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kthread.h>
 #include <linux/sched.h>
@@ -123,7 +124,12 @@ netdevgen_build_packet (void)
 	udp->dest	= 0;
 	udp->len	= htons (pktlen - sizeof (*ip));
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION (4, 2, 0)
+	__ip_select_ident(get_net_ns_by_pid (1),
+			  ip, skb_shinfo(skb)->gso_segs ?: 1);
+#else
 	__ip_select_ident(ip, skb_shinfo(skb)->gso_segs ?: 1);	
+#endif
 
 	memset (&fl4, 0, sizeof (fl4));
 	fl4.saddr = srcip;

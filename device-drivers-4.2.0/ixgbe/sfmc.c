@@ -307,3 +307,90 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 
 	return 0;
 }
+
+
+static void
+sfmc_send_arp (struct sfmc_fib *sf, struct net_device *dev)
+{
+	/* make and send arp requeset for sf->mac via dev */
+}
+
+/* arp handler */
+static void
+sfmc_arp_processor (unsigned long arg)
+{
+	unsigned long next_timer;
+	struct sfmc *sfmc = arg;
+	struct sfmc_fib *sf;
+
+#define time_for_send_arp_req(sf) (sf->arp_ttl % ARP_PROBE_INTERVAL == 0)
+#define decrement_arp_ttl(sf, max) ((sf->arp_ttl == 0) ? max : sf->arp_ttl - 1)
+
+	list_for_each_entry_rcu (sf, &sfcm->fib_list, list) {
+		/* check arp state and process */
+		switch (sf->arp_state) {
+		case ARP_PROBE :
+			if (time_for_send_arp_req (sf))
+				sfmc_send_arp (sf, sfmc->dev);
+
+			decrement_arp_ttl (sf, ARP_PROBE_LIFETIME);
+			break;
+
+		case ARP_REACHABLE :
+			decrement_arp_ttl (sf, 0);
+			if (sf->arp_ttl == 0)
+				sf->arp_state = ARP_REPROBE;
+			break;
+
+		case ARP_REPROBE :
+			if (time_for_send_arp_req (sf))
+				sfmc_send_arp (sf, sfcm->dev);
+
+			decrement_arp_ttl (sf, 0);
+			if (sf->arp_ttl == 0)
+				sf->arp_state = ARP_PROBE;
+			break;
+		}
+	}
+
+	next_timer = jiffies + (1 * HZ);
+	mod_timer (&sfmc->arp_timer, next_timer);
+}
+
+
+
+static void
+sfmc_init (struct sfmc *sfmc)
+{
+	int n;
+	struct net_device *dev = container_of (sfmc, struct net_device, sfmc)
+
+	memset (sfmc, 0, sizeof (*sfmc));
+
+	sfmc->dev = dev;
+	rwlock_init (&sfmc->lock);
+
+	/* init hash table for madcap_obj_entry */
+	for (n = 0; n < SFMC_HASH_SIZE; n++)
+		INIT_HLIST_HEAD (&sfmc->sfmc_table[n]);
+
+	/* init fib tree for ip routing */
+	INIT_LIST_HEAD (&sfmc->fib_list);
+	sfmc->fib_tree = New_Patricia (32);
+
+	/* init arp processor timer */
+	init_timer_deferrable (&sfmc->arp_timer);
+	sfmc->arp_timer.function = sfmc_arp_processor;
+	sfmc->arp_timer.data = sfmc;
+	mod_timer (&sfmc->arp_timer, jiffies + (1 * HZ));
+
+	return sfmc;
+}
+
+static void
+sfmc_exit (struct sfmc *sfmc)
+{
+	/* stop arp processor.
+	 * destroy sfmc_table and sfmc_fib tree.
+	 */
+}

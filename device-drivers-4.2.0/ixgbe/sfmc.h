@@ -46,18 +46,21 @@ struct madcap_obj * sfmc_llt_entry_dump (struct net_device *dev,
 /* madcap table and config structure */
 struct sfmc {
 
-	struct net_device *dev;	/* physical device */
+	struct net_device 	*dev;	/* physical device */
 	rwlock_t		lock;
 
 #define SFMC_HASH_BITS	8
 #define SFMC_HASH_SIZE	(1 << SFMC_HASH_BITS)
 
 	struct hlist_head	sfmc_table[SFMC_HASH_SIZE]; /* sfmc_table */
+	struct list_head	fib_list;	/* sfmc_fib list */
 	patricia_tree_t		*fib_tree;	/* ipv4 fib table
 						 * struct sfmc_fib */
 
 	struct madcap_obj_udp		ou;	/* udp encap config	*/
 	struct madcap_obj_config	oc;	/* offset and length */
+
+	struct timer_list	arp_timer;	/* arp handling */
 };
 
 struct sfmc_table {
@@ -71,13 +74,11 @@ struct sfmc_table {
 
 
 enum {
-	ARP_NONE,
 	ARP_PROBE,
 	ARP_REACHABLE,
 	ARP_REPROBE,
 };
-/* NONE     -> send arp req and set state PROBE.
- * PROBE    -> repeating arp req until recv arp rep.
+/* PROBE    -> repeating arp req until recv arp rep.
  * RECHABLE -> set when recv arp rep. decrement ttl.
  * REPROBE  -> set when ttl of REACHABLE becomes 0.
  * 	if ttl % INTERVAL = 0, send arp req.
@@ -91,6 +92,9 @@ enum {
 #define ARP_PROBE_LIFETIME	60	/* lifetime with arp req */
 
 struct sfmc_fib {
+	struct list_head	list;	/* sfmc->fib_list */
+	struct rcu_head		rcu;
+
 	patricia_node_t	*pn;		/* patricia node of this fib */
 	prefix_t	*prefix;	/* prefix of this fib	*/
 
@@ -103,8 +107,10 @@ struct sfmc_fib {
 #define ARP_STATE_XMITABLE(sf) \
 	(sf->arp_state == ARP_REACHABLE || af->arp_state == ARP_REPROBE)
 
-
 #define sfmc_lock(sfmc) write_lock_bh(&sfmc->lock)
 #define sfmc_unlock(sfmc) write_lock_bh(&sfmc->lock)
+
+
+static void sfmc_init (struct sfmc *sfmc);
 
 #endif

@@ -175,7 +175,7 @@ char *prefix_toa (prefix_t * prefix);
 static inline void
 dst2prefix (__be32 addr, u16 len, prefix_t * prefix)
 {
-	prefix->family = af;
+	prefix->family = AF_INET;
 	prefix->bitlen = len;
 	prefix->ref_count = 1;
 	*((__be32 *)&prefix->add) = addr;

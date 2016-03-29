@@ -20,27 +20,7 @@
 #include "patricia.h"	/* patricia trie */
 
 
-#define SFMC_NETDEV_PRIV       _structure_name_here_
-
-#define netdev_get_sfmc(dev) \
-	&(((struct SFMC_NETDEV_PRIV *)(netdev_priv (dev)))->sfmc)
-
-
-/* struct madcap_ops */
-static int sfmc_acquire_dev (struct net_device *dev);
-static int sfmc_release_dev (struct net_device *dev, struct net_device *vdev);
-
-static int sfmc_llt_cfg (struct net_device *dev, struct madcap_obj *obj);
-static struct madcap_obj * sfmc_llt_config_get (struct net_device *dev);
-
-static int sfmc_udp_cfg (struct net_device *dev, struct madcap_obj *obj);
-static int sfmc_udp_config_get (struct net_device *dev);
-
-static int sfmc_llt_entry_add (struct net_device *dev, struct madcap_obj *obj);
-static int sfmc_llt_entry_del (struct net_device *dev, struct madcap_obj *obj);
-
-struct madcap_obj * sfmc_llt_entry_dump (struct net_device *dev,
-					 struct netlink_callback *cb);
+#define SFMC_NETDEV_PRIV       ixgbe_adapter
 
 
 /* madcap table and config structure */
@@ -104,13 +84,16 @@ struct sfmc_fib {
 	int		arp_state;	/* arp state */
 	int		arp_ttl;	/* lifetime */
 };
-#define ARP_STATE_XMITABLE(sf) \
-	(sf->arp_state == ARP_REACHABLE || af->arp_state == ARP_REPROBE)
-
 #define sfmc_lock(sfmc) write_lock_bh(&sfmc->lock)
 #define sfmc_unlock(sfmc) write_lock_bh(&sfmc->lock)
 
 
-static void sfmc_init (struct sfmc *sfmc);
+/* sfmc structure constructor and destructor.
+ * inserted before regsiter_netdev */
+int sfmc_init (struct sfmc *sfmc, struct net_device *dev);
+int sfmc_exit (struct sfmc *sfmc);
+
+/* snoop arp packet. it must be inserted before netfi_rx(). */
+void sfmc_recv_arp (struct sfmc *sfmc, struct sk_buff *skb);
 
 #endif

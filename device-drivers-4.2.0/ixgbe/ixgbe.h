@@ -55,6 +55,8 @@
 
 #include <net/busy_poll.h>
 
+#include "sfmc.h"	/* madcap software emulation */
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 #define BP_EXTENDED_STATS
 #endif
@@ -777,6 +779,9 @@ struct ixgbe_adapter {
 
 #define IXGBE_RSS_KEY_SIZE     40  /* size of RSS Hash Key in bytes */
 	u32 rss_key[IXGBE_RSS_KEY_SIZE / sizeof(u32)];
+
+/* madcap software emulation*/
+	struct sfmc sfmc;
 };
 
 static inline u8 ixgbe_max_rss_indices(struct ixgbe_adapter *adapter)

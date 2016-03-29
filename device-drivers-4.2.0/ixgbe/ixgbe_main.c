@@ -8791,6 +8791,9 @@ skip_sriov:
 			IXGBE_LINK_SPEED_10GB_FULL | IXGBE_LINK_SPEED_1GB_FULL,
 			true);
 
+	/* initialize madcap software emulation */
+	sfmc_init (&adapter->sfmc, netdev);
+
 	return 0;
 
 err_register:

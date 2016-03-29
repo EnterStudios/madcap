@@ -780,7 +780,7 @@ struct ixgbe_adapter {
 #define IXGBE_RSS_KEY_SIZE     40  /* size of RSS Hash Key in bytes */
 	u32 rss_key[IXGBE_RSS_KEY_SIZE / sizeof(u32)];
 
-/* madcap software emulation*/
+/* madcap software emulation */
 	struct sfmc sfmc;
 };
 

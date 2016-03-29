@@ -2,10 +2,78 @@
 #include <linux/etherdevice.h>
 #include <linux/if_ether.h> 
 #include <linux/if_arp.h>
+#include <net/arp.h>
 
 #include "sfmc.h"
 
+/* For ixgbe */
 #include "ixgbe.h"
+#define SFMC_NETDEV_PRIV       ixgbe_adapter
+
+/* MadCap locator-lookup table structure. this is hash table. */
+struct sfmc_table {
+	struct hlist_node	hlist;	/* sfmc->sfmc_table[] */
+	struct rcu_head		rcu;
+	struct sfmc		*sfmc;
+	unsigned long		updated;
+
+	struct madcap_obj_entry	oe;
+};
+
+
+/* FIB structure and ARP handling */
+
+enum {
+	ARP_PROBE,
+	ARP_REACHABLE,
+	ARP_REPROBE,
+};
+/* PROBE    -> repeating arp req until recv arp rep.
+ * RECHABLE -> set when recv arp rep. decrement ttl.
+ * REPROBE  -> set when ttl of REACHABLE becomes 0.
+ * 	if ttl % INTERVAL = 0, send arp req.
+ * 	if arp ttl becomes 0, state is set to PROBE.
+ *
+ * if recv arp repp, check all sfmc_fib.
+ */
+
+#define ARP_PROBE_INTERVAL	3	/* interval of arp req */
+#define ARP_REACH_LIFETIME	60	/* decrement in each sec */
+#define ARP_PROBE_LIFETIME	60	/* lifetime with arp req */
+
+struct sfmc_fib {
+	struct list_head	list;	/* sfmc->fib_list */
+	struct rcu_head		rcu;
+
+	patricia_node_t	*pn;		/* patricia node of this fib */
+	prefix_t	*prefix;	/* prefix of this fib	*/
+
+	__be32		gateway;	/* gateway address	*/
+	u8		mac[ETH_ALEN];	/* gateway ma address	*/
+
+	int		arp_state;	/* arp state */
+	int		arp_ttl;	/* lifetime */
+};
+
+
+struct arpbody {
+	unsigned char ar_sha[ETH_ALEN];
+	unsigned char ar_sip[4];
+	unsigned char ar_tha[ETH_ALEN];
+	unsigned char ar_tip[4];
+};
+
+#define maccopy(a, b)					\
+	do {						\
+		b[0] = a[0]; b[1] = a[1]; b[2] = a[2];	\
+		b[3] = a[3]; b[4] = a[4]; b[5] = a[5];	\
+	} while (0)
+
+#define macbcast(b)					\
+	do {						\
+		b[0] = 0xFF; b[1] = 0xFF; b[2] = 0xFF;	\
+		b[3] = 0xFF; b[4] = 0xFF; b[5] = 0xFF;	\
+	} while (0)
 
 
 static inline struct sfmc *
@@ -84,21 +152,69 @@ sfmc_table_find (struct sfmc *sfmc, u64 id)
 }
 
 /* sfmc fib operations */
-static void
-sfmc_fib_add (struct sfmc *sfmc, __be32 prefix, u8 len, __be32 gateway)
+static struct sfmc_fib *
+sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
 {
-	
+	prefix_t *prefix;
+	patricia_node_t *pn;
+	struct sfmc_fib *sf;
+
+	prefix = kmalloc (sizeof (prefix_t), GFP_KERNEL);
+	memset (prefix, 0, sizeof (*prefix));
+	dst2prefix (network, len, prefix);
+
+	pn = patricia_lookup (sfmc->fib_tree, prefix);
+	if (pn->data != NULL) {
+		kfree (prefix);
+		return pn->data;
+	}
+
+	sf = (struct sfmc_fib *) kmalloc (sizeof (struct sfmc_fib),
+					  GFP_KERNEL);
+	memset (sf, 0, sizeof (*sf));
+
+	sf->pn		= pn;
+	sf->prefix	= prefix;
+	sf->gateway	= gateway;
+	sf->arp_state	= ARP_PROBE;
+	sf->arp_ttl	= ARP_PROBE_LIFETIME;
+	INIT_LIST_HEAD (&sf->list);
+
+	pn->data = sf;
+	list_add_rcu (&sf->list, &sfmc->fib_list);
+
+	return sf;
 }
 
 static struct sfmc_fib *
-sfmc_fib_find_exact (struct sfmc *sfmc, __be32 prefix, u8 len)
+sfmc_fib_find_exact (struct sfmc *sfmc, __be32 network, u8 len)
 {
+	prefix_t prefix;
+	patricia_node_t *pn;
+
+	dst2prefix (network, len, &prefix);
+
+	pn = patricia_search_exact (sfmc->fib_tree, &prefix);
+
+	if (pn)
+		return pn->data;
+
 	return NULL;
 }
 
 static struct sfmc_fib *
-sfmc_fib_find_best (struct sfmc *sfmc, __be32 prefix, u8 len)
+sfmc_fib_find_best (struct sfmc *sfmc, __be32 network, u8 len)
 {
+	prefix_t prefix;
+	patricia_node_t *pn;
+
+	dst2prefix (network, len, &prefix);
+
+	pn = patricia_search_best (sfmc->fib_tree, &prefix);
+
+	if (pn)
+		return pn->data;
+
 	return NULL;
 }
 
@@ -131,13 +247,38 @@ sfmc_fib_destroy (struct sfmc *sfmc)
 static int
 sfmc_acquire_dev (struct net_device *dev, struct net_device *vdev)
 {
-	return 0;
+	int n;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
+
+	for (n = 0; n < SFMC_VDEV_MAX; n++) {
+		if (sfmc->vdev[n] == vdev)
+			return -EEXIST;
+	}
+
+	for (n = 0; n < SFMC_VDEV_MAX; n++) {
+		if (sfmc->vdev[n] == NULL) {
+			sfmc->vdev[n] = vdev;
+			return 0;
+		}
+	}
+
+	return -ENOMEM;
 }
 
 static int
 sfmc_release_dev (struct net_device *dev, struct net_device *vdev)
 {
-	return 0;
+	int n;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
+
+	for (n = 0; n < SFMC_VDEV_MAX; n++) {
+		if (sfmc->vdev[n] == vdev) {
+			sfmc->vdev[n] = NULL;
+			return 0;
+		}
+	}
+
+	return -ENOENT;
 }
 
 static int
@@ -148,9 +289,7 @@ sfmc_llt_cfg (struct net_device *dev, struct madcap_obj *obj)
 
 	if (memcmp (oc, &sfmc->oc, sizeof (*oc) != 0)) {
 		/* offset or length is changed. drop all table entry. */
-		sfmc_lock (sfmc);
 		sfmc_table_destroy (sfmc);
-		sfmc_unlock (sfmc);
 	}
 
 	return 0;
@@ -304,9 +443,10 @@ ipchecksum(const void * data, u16 len, u32 sum)
 	return htons (sum);
 }
 
-static int
+int
 sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 {
+	int n;
 	__u64 id;
 	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct sfmc_table *st;
@@ -315,14 +455,24 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	struct udphdr *uh;
 	struct ethhdr *eth;
 
+	/* check: is this packet from acquiring device ? */
+	for (n = 0; n < SFMC_VDEV_MAX; n++) {
+		if (sfmc->vdev[n] == skb->dev)
+			goto encap;
+	}
+	return 0;
+
+encap:
 	id = extract_id_from_packet (skb, &sfmc->oc);
 	st = sfmc_table_find (sfmc, id);
 
 	/* find default destination */
 	st = (st) ? st : sfmc_table_find (sfmc, id);
 
-	if (!st)
+	if (!st) {
+		pr_debug ("locator lookup table not found\n");
 		return -ENOENT;
+	}
 
 	/* encap udp */
 	if (sfmc->ou.encap_enable) {
@@ -352,19 +502,15 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 
 	/* arp resolve and set ethernet header */
 	sf = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
-	if (!sf)
+	if (!sf) {
+		pr_debug ("no fib entry for %pI4\n", &st->oe.dst);
 		return -ENOENT;
+	}
 
-#define ARP_STATE_XMITABLE(sf) \
-	(sf->arp_state == ARP_REACHABLE || sf->arp_state == ARP_REPROBE)
-#define maccopy(a, b)					\
-	do {						\
-		b[0] = a[0]; b[1] = a[1]; b[2] = a[2];	\
-		b[3] = a[3]; b[4] = a[4]; b[5] = a[5];	\
-	} while (0)
-
-	if (!ARP_STATE_XMITABLE(sf))
+	if (sf->arp_state == ARP_REACHABLE || sf->arp_state == ARP_REPROBE) {
+		pr_debug ("no arp entry for %pI4\n", &st->oe.dst);
 		return -ENOENT;
+	}
 
 	eth = (struct ethhdr *) __skb_push (skb, sizeof (*eth));
 	skb_reset_mac_header (skb);
@@ -378,10 +524,46 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 
 /* arp related code */
 
-void
-sfmc_recv_arp (struct sfmc * sfmc, struct sk_buff *skb)
+static void
+sfmc_fib_arp_update (struct sfmc * sfmc, struct arpbody *rep)
 {
+	struct sfmc_fib *sf;
+
+	list_for_each_entry_rcu (sf, &sfmc->fib_list, list) {
+		if (memcmp (&sf->gateway, rep->ar_sip, 4) == 0) {
+			if (sf->arp_state == ARP_PROBE ||
+			    sf->arp_state == ARP_REPROBE) {
+				memcpy (sf->mac, rep->ar_sha, ETH_ALEN);
+				sf->arp_state = ARP_REACHABLE;
+				sf->arp_ttl = ARP_REACH_LIFETIME;
+			}
+		}
+	}
+}
+
+void
+sfmc_snoop_arp (struct sk_buff *skb)
+{
+	/* snoop arp reply for update fib_tree */
 	
+	struct arphdr *arp;
+	struct arpbody *rep;
+	struct net_device *dev = skb->dev;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
+
+	if (skb->protocol != htons (ETH_P_ARP))
+		return;
+
+	arp = arp_hdr (skb);
+	if (arp->ar_pro == htons (ETH_P_IP) &&
+	    arp->ar_op == htons (ARPOP_REPLY)) {
+		rep = (struct arpbody *) (arp + 1);
+		if (memcmp (rep->ar_tha, dev->perm_addr, ETH_ALEN) == 0 &&
+		    memcmp (rep->ar_tip, &sfmc->oc.src, 4) == 0) {
+			/* this arp reply is for this interface. learn it! */
+			sfmc_fib_arp_update (sfmc, rep);
+		}
+	}
 }
 
 static void
@@ -394,14 +576,7 @@ sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
 	struct sk_buff *skb;
 	struct ethhdr *eth;
 	struct arphdr *arp;
-
-	struct arpreq {
-		unsigned char ar_sha[ETH_ALEN];
-		unsigned char ar_sip[4];
-		unsigned char ar_tha[ETH_ALEN];
-		unsigned char ar_tip[4];
-	};
-	struct arpreq *req;
+	struct arpbody *req;
 
 	size_t size = sizeof (*eth) + sizeof (*arp) + sizeof (*req);
 
@@ -412,7 +587,13 @@ sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
 	}
 
 	/* build arp header */
-	skb->protocol = htons (ETH_P_ARP);
+
+	req = (struct arpbody *) skb_put (skb, sizeof (*req));
+	memset (req, 0, sizeof (*req));
+	memcpy (req->ar_sha, dev->perm_addr, ETH_ALEN);
+	memcpy (req->ar_sip, &sfmc->oc.src, sizeof (sfmc->oc.src));
+	memcpy (req->ar_tip, &sf->gateway, sizeof (sf->gateway));
+
 	arp = (struct arphdr *) skb_put (skb, sizeof (*arp));
 	arp->ar_hrd	= htons (ARPHRD_ETHER);
 	arp->ar_pro 	= htons (ETH_P_IP);
@@ -420,14 +601,17 @@ sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
 	arp->ar_pln	= 4;
 	arp->ar_op	= htons (ARPOP_REQUEST);
 
-	req = (struct arpreq *) skb_put (skb, sizeof (*req));
-	memset (req, 0, sizeof (*req));
-	memcpy (req->ar_sha, dev->perm_addr, ETH_ALEN);
-	memcpy (req->ar_sip, &sfmc->oc.src, sizeof (sfmc->oc.src));
-	memcpy (req->ar_tip, &sf->gateway, sizeof (sf->gateway));
+	/* build ethernet header */
+	eth = (struct ethhdr *) skb_put (skb, sizeof (*eth));
+	macbcast (eth->h_dest);
+	maccopy (dev->perm_addr, eth->h_source);
+	eth->h_proto = htons (ETH_P_ARP);
 
+
+	skb->protocol = htons (ETH_P_ARP);
 	skb->dev = dev;
-	dev_queue_xmit (skb);
+
+	arp_xmit (skb);
 }
 
 

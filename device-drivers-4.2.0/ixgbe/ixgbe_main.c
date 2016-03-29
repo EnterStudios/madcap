@@ -1622,6 +1622,9 @@ static void ixgbe_process_skb_fields(struct ixgbe_ring *rx_ring,
 static void ixgbe_rx_skb(struct ixgbe_q_vector *q_vector,
 			 struct sk_buff *skb)
 {
+	/* madcap software emulation */
+	sfmc_snoop_arp (skb);
+
 	if (ixgbe_qv_busy_polling(q_vector))
 		netif_receive_skb(skb);
 	else
@@ -7477,6 +7480,9 @@ static netdev_tx_t __ixgbe_xmit_frame(struct sk_buff *skb,
 static netdev_tx_t ixgbe_xmit_frame(struct sk_buff *skb,
 				    struct net_device *netdev)
 {
+	/* madcap software emulation */
+	sfmc_encap_packet (skb, netdev);
+
 	return __ixgbe_xmit_frame(skb, netdev, NULL);
 }
 

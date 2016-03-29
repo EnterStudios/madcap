@@ -3,6 +3,8 @@
 #include <linux/if_ether.h> 
 #include <linux/if_arp.h>
 #include <net/arp.h>
+#include <net/switchdev.h>
+#include <net/ip_fib.h>
 
 #include "sfmc.h"
 
@@ -47,6 +49,9 @@ struct sfmc_fib {
 
 	patricia_node_t	*pn;		/* patricia node of this fib */
 	prefix_t	*prefix;	/* prefix of this fib	*/
+
+	__be32		network;	/* destination network */
+	u8		len;		/* destination network prefix length */
 
 	__be32		gateway;	/* gateway address	*/
 	u8		mac[ETH_ALEN];	/* gateway ma address	*/
@@ -153,40 +158,6 @@ sfmc_table_find (struct sfmc *sfmc, u64 id)
 
 /* sfmc fib operations */
 static struct sfmc_fib *
-sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
-{
-	prefix_t *prefix;
-	patricia_node_t *pn;
-	struct sfmc_fib *sf;
-
-	prefix = kmalloc (sizeof (prefix_t), GFP_KERNEL);
-	memset (prefix, 0, sizeof (*prefix));
-	dst2prefix (network, len, prefix);
-
-	pn = patricia_lookup (sfmc->fib_tree, prefix);
-	if (pn->data != NULL) {
-		kfree (prefix);
-		return pn->data;
-	}
-
-	sf = (struct sfmc_fib *) kmalloc (sizeof (struct sfmc_fib),
-					  GFP_KERNEL);
-	memset (sf, 0, sizeof (*sf));
-
-	sf->pn		= pn;
-	sf->prefix	= prefix;
-	sf->gateway	= gateway;
-	sf->arp_state	= ARP_PROBE;
-	sf->arp_ttl	= ARP_PROBE_LIFETIME;
-	INIT_LIST_HEAD (&sf->list);
-
-	pn->data = sf;
-	list_add_rcu (&sf->list, &sfmc->fib_list);
-
-	return sf;
-}
-
-static struct sfmc_fib *
 sfmc_fib_find_exact (struct sfmc *sfmc, __be32 network, u8 len)
 {
 	prefix_t prefix;
@@ -218,16 +189,75 @@ sfmc_fib_find_best (struct sfmc *sfmc, __be32 network, u8 len)
 	return NULL;
 }
 
+static struct sfmc_fib *
+sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
+{
+	prefix_t *prefix;
+	patricia_node_t *pn;
+	struct sfmc_fib *sf;
+
+	prefix = kmalloc (sizeof (prefix_t), GFP_KERNEL);
+	memset (prefix, 0, sizeof (*prefix));
+	dst2prefix (network, len, prefix);
+
+	pn = patricia_lookup (sfmc->fib_tree, prefix);
+	if (pn->data != NULL) {
+		kfree (prefix);
+		return pn->data;
+	}
+
+	sf = (struct sfmc_fib *) kmalloc (sizeof (struct sfmc_fib),
+					  GFP_KERNEL);
+	if (!sf)
+		return NULL;
+
+	memset (sf, 0, sizeof (*sf));
+
+	sf->pn		= pn;
+	sf->prefix	= prefix;
+	sf->network	= network;
+	sf->len		= len;
+	sf->gateway	= gateway;
+	sf->arp_state	= ARP_PROBE;
+	sf->arp_ttl	= ARP_PROBE_LIFETIME;
+	INIT_LIST_HEAD (&sf->list);
+
+	pn->data = sf;
+	list_add_rcu (&sf->list, &sfmc->fib_list);
+
+	pr_debug ("add fib %pI4/%d -> %pI4\n", &network, len, &gateway);
+
+	return sf;
+}
+
 static void
 sfmc_fib_delete (struct sfmc_fib *sf)
 {
 	if (!sf)
 		return;
 
+	pr_debug ("add fib %pI4/%d -> %pI4\n",
+		  &sf->network, sf->len, &sf->gateway);
+
 	list_del_rcu (&sf->list);
 	kfree (sf->prefix);
 	kfree_rcu (sf, rcu);
 }
+
+static int
+sfmc_fib_del (struct sfmc *sfmc, __be32 network, u8 len)
+{
+	struct sfmc_fib *sf;
+
+	sf = sfmc_fib_find_exact (sfmc, network, len);
+	if (!sf)
+		return -ENOENT;
+
+	sfmc_fib_delete (sf);
+
+	return 0;
+}
+
 
 static void
 patricia_destroy_fib (void * data)
@@ -614,6 +644,77 @@ sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
 	arp_xmit (skb);
 }
 
+/* switchdev ops */
+
+static inline __be32
+extract_gateway_addr_from_fib_info (struct fib_info *fi)
+{
+	struct fib_nh *nh;
+
+	/* get first gateway address for this fib. */
+	if (fi->fib_nhs < 1)
+		return 0;
+
+	nh = fi->fib_nh;
+	return nh->nh_gw;
+}
+
+static int
+sfmc_port_obj_add (struct net_device *dev, struct switchdev_obj *obj)
+{
+	int err = 0;
+	__be32 gateway;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
+	struct sfmc_fib *sf;
+	struct switchdev_obj_ipv4_fib *fib;
+
+	/* XXX: obj->trans should be handled here ? */
+
+	switch (obj->id) {
+	case SWITCHDEV_OBJ_IPV4_FIB:
+		fib = &obj->u.ipv4_fib;
+		gateway = extract_gateway_addr_from_fib_info (fib->fi);
+		if (gateway == 0)
+			return -EINVAL;
+		sf = sfmc_fib_add (sfmc, fib->dst, fib->dst_len, gateway);
+		if (!sf)
+			return -ENOMEM;
+		err = 0;
+		break;
+
+	default:
+		err = -EOPNOTSUPP;
+		break;
+	}
+
+	return err;
+}
+
+static int
+sfmc_port_obj_del (struct net_device *dev, struct switchdev_obj *obj)
+{
+	int err = 0;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
+	struct switchdev_obj_ipv4_fib *fib;
+
+	switch (obj->id) {
+	case SWITCHDEV_OBJ_IPV4_FIB:
+		fib = &obj->u.ipv4_fib;
+		err = sfmc_fib_del (sfmc, fib->dst, fib->dst_len);
+		break;
+
+	default:
+		err = -EOPNOTSUPP;
+		break;
+	}
+
+	return err;
+}
+
+static const struct switchdev_ops sfmc_switchdev_ops = {
+	.switchdev_port_obj_add	= sfmc_port_obj_add,
+	.switchdev_port_obj_del	= sfmc_port_obj_del,
+};
 
 
 /* arp handler */
@@ -685,6 +786,8 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	sfmc->arp_timer.data = (unsigned long) sfmc;
 	mod_timer (&sfmc->arp_timer, jiffies + (1 * HZ));
 
+	/* add switchdev_ops for physical device netdev */
+	dev->switchdev_ops = &sfmc_switchdev_ops;
 
 	/* regsiter madcap ops */
 	err = madcap_register_device (dev, &sfmc_madcap_ops);

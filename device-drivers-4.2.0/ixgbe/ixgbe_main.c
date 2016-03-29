@@ -8898,6 +8898,9 @@ static void ixgbe_remove(struct pci_dev *pdev)
 
 	if (disable_dev)
 		pci_disable_device(pdev);
+
+	/* madcap software emulation */
+	sfmc_exit (&adapter->sfmc);
 }
 
 /**

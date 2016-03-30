@@ -1279,10 +1279,10 @@ static void e1000_remove(struct pci_dev *pdev)
 	e1000_down_and_stop(adapter);
 	e1000_release_manageability(adapter);
 
+	unregister_netdev(netdev);
+
 	/* stop madcap software emulation */
 	sfmc_exit (&adapter->sfmc);
-
-	unregister_netdev(netdev);
 
 	e1000_phy_hw_reset(hw);
 

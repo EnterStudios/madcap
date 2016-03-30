@@ -462,6 +462,9 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	 * packet is preserved.
 	 */
 	dst = skb_dst (skb);
+	if (dst == NULL)
+		return 0;
+
 	for (n = 0; n < SFMC_VDEV_MAX; n++) {
 		if (sfmc->vdev[n] == dst->dev)
 			goto encap;

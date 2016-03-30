@@ -462,13 +462,14 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	 * packet is preserved.
 	 */
 	dst = skb_dst (skb);
-	if (dst == NULL)
+	if (!dst)
 		return 0;
 
 	for (n = 0; n < SFMC_VDEV_MAX; n++) {
 		if (sfmc->vdev[n] == dst->dev)
 			goto encap;
 	}
+
 	return 0;
 
 encap:
@@ -499,16 +500,15 @@ encap:
 	/* encap udp */
 	if (sfmc->ou.encap_enable) {
 		uh = (struct udphdr *) __skb_push (skb, sizeof (*uh));
-		skb_reset_transport_header (skb);
 		uh->dest	= sfmc->ou.dst_port;
 		uh->source	= sfmc->ou.src_port;
 		uh->len		= htons (skb->len);
 		uh->check	= 0;	/* XXX */
+		skb_set_transport_header (skb, 0);
 	}
 
 	/* encap ip */
 	iph = (struct iphdr *) __skb_push (skb, sizeof (*iph));
-	skb_reset_network_header (skb);
 	iph->version	= 4;
 	iph->ihl	= sizeof (*iph) >> 2;
 	iph->frag_off	= 0;
@@ -519,13 +519,14 @@ encap:
 	iph->daddr	= st->oe.dst;
 	iph->saddr	= sfmc->oc.src;
 	iph->check	= ipchecksum (skb->data, sizeof (*iph), 0);
+	skb_set_network_header (skb, 0);
 
 	/* add ethernet header */
 	eth = (struct ethhdr *) __skb_push (skb, sizeof (*eth));
-	skb_reset_mac_header (skb);
 	memcpy (eth->h_dest, sf->mac, ETH_ALEN);
 	memcpy (eth->h_source, dev->perm_addr, ETH_ALEN);
 	eth->h_proto = htons (ETH_P_IP);
+	skb_set_mac_header (skb, 0);
 
 	return 0;
 }

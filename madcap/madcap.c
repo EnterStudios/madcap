@@ -634,6 +634,10 @@ madcap_register_device (struct net_device *dev, struct madcap_ops *mc_ops)
 	if (get_madcap_ops (dev))
 		return -EEXIST;
 	
+	/* skb->dst is used to distinguish that packet is xmited from
+	 * encaped device. see sfmc_encap_packet. */
+	netif_keep_dst (dev);
+
 	write_lock_bh (&madnet->lock);
 	for (n = 0; n < MADCAPDEV_PERNET_NUM; n++) {
 		if (madnet->dev[n] == NULL) {

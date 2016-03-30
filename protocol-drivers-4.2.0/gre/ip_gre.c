@@ -729,6 +729,17 @@ static int ipgre_newlink(struct net *src_net, struct net_device *dev,
 	}
 
 	ipgre_netlink_parms(data, tb, &p);
+
+        if (madcap_enable) {
+		/* check: is link device madcap capable. */
+		struct net_device *mcdev;
+
+		mcdev = __dev_get_by_index (dev_net (dev), p.link);
+		if (mcdev && get_madcap_ops (mcdev)) {
+			madcap_acquire_dev (mcdev, dev);
+		}
+	}
+
 	return ip_tunnel_newlink(dev, tb, &p);
 }
 

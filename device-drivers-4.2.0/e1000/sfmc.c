@@ -37,6 +37,8 @@ struct sfmc_fib {
 	struct list_head	list;	/* sfmc->fib_list */
 	struct rcu_head		rcu;
 
+	struct sfmc 	*sfmc;		/* parent */
+
 	patricia_node_t	*pn;		/* patricia node of this fib */
 	prefix_t	*prefix;	/* prefix of this fib	*/
 
@@ -181,6 +183,7 @@ sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
 
 	memset (sf, 0, sizeof (*sf));
 
+	sf->sfmc	= sfmc;
 	sf->pn		= pn;
 	sf->prefix	= prefix;
 	sf->network	= network;
@@ -205,8 +208,8 @@ sfmc_fib_delete (struct sfmc_fib *sf)
 	pr_debug ("delete fib %pI4/%d->%pI4",
 		  &sf->network, sf->len, &sf->gateway);
 
+	patricia_remove (sf->sfmc->fib_tree, sf->pn);
 	list_del_rcu (&sf->list);
-	kfree (sf->prefix);
 	kfree_rcu (sf, rcu);
 }
 
@@ -224,17 +227,18 @@ sfmc_fib_del (struct sfmc *sfmc, __be32 network, u8 len)
 	return 0;
 }
 
-
-static void
-patricia_destroy_fib (void * data)
-{
-	sfmc_fib_delete ((struct sfmc_fib *) data);
-}
-
 static void
 sfmc_fib_destroy (struct sfmc *sfmc)
 {
-	Destroy_Patricia (sfmc->fib_tree, patricia_destroy_fib);
+	struct list_head *p, *tmp;
+	struct sfmc_fib *sf;
+
+	list_for_each_safe (p, tmp, &sfmc->fib_list) {
+		sf = list_entry (p, struct sfmc_fib, list);
+		sfmc_fib_delete (sf);
+	}
+
+	kfree (sfmc->fib_tree);
 }
 
 

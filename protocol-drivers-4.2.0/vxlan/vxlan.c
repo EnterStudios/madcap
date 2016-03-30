@@ -50,6 +50,13 @@
 #include <net/ip6_checksum.h>
 #endif
 
+/* madcapable version */
+#include <madcap.h>
+
+static int madcap_enable __read_mostly = 0;
+module_param_named (madcap_enable, madcap_enable, int, 0444);
+MODULE_PARM_DESC (madcap_enable, "if 1, madcap offload is enabled.");
+
 #define VXLAN_VERSION	"0.1"
 
 #define PORT_HASH_BITS	8
@@ -132,6 +139,8 @@ struct vxlan_dev {
 	spinlock_t	  hash_lock;
 	unsigned int	  addrcnt;
 	unsigned int	  addrmax;
+
+	struct net_device *mcdev;	/* madcap device */
 
 	struct hlist_head fdb_head[FDB_HASH_SIZE];
 };
@@ -2042,6 +2051,41 @@ tx_free:
 	dev_kfree_skb(skb);
 }
 
+static int vxlan_xmit_madcap (struct sk_buff *skb, struct net_device *dev)
+{
+	/* Transmit local packets over Vxlan via madcap capable
+         * device. Table lookup and outer IP/UDP headers
+         * are added by madcap device. This function only add
+         * vxlan header and enqueue the packets to madcap device.
+         */
+	int err;
+	struct vxlanhdr *vxh;
+	struct vxlan_dev *vxlan = netdev_priv (dev);
+
+	#ifdef OVBENCH
+	if (SKB_OVBENCH (skb))
+		skb->vxlan_xmit_skb_in = rdtsc ();
+	#endif
+
+	err = skb_cow_head (skb, sizeof (*vxh));
+	if (unlikely (err)) {
+		kfree_skb (skb);
+		return err;
+	}
+
+	skb = vlan_hwaccel_push_inside (skb);   /* XXX: needed? */
+	if (WARN_ON (!skb))
+		return -ENOMEM;
+
+	vxh = (struct vxlanhdr *) __skb_push (skb, sizeof (*vxh));
+	vxh->vx_flags = htonl (VXLAN_HF_VNI);
+	vxh->vx_vni = vxlan->default_dst.remote_vni;
+
+	skb_set_inner_protocol (skb, htons (ETH_P_TEB));
+
+	return madcap_queue_xmit (skb, vxlan->mcdev);
+}
+
 /* Transmit local packets over Vxlan
  *
  * Outer IP header inherits ECN and DF from inner header.
@@ -2076,6 +2120,11 @@ static netdev_tx_t vxlan_xmit(struct sk_buff *skb, struct net_device *dev)
 		}
 		eth = eth_hdr(skb);
 #endif
+	}
+
+	/* madcap shortcut!! */
+	if (madcap_enable && vxlan->mcdev) {
+		vxlan_xmit_madcap (skb, dev);
 	}
 
 	f = vxlan_find_mac(vxlan, eth->h_dest);
@@ -2634,6 +2683,10 @@ static int vxlan_newlink(struct net *src_net, struct net_device *dev,
 			pr_info("ifindex %d does not exist\n", dst->remote_ifindex);
 			return -ENODEV;
 		}
+
+		/* check is lower dev madcap capable? */
+		if (get_madcap_ops (lowerdev))
+			vxlan->mcdev = lowerdev;
 
 #if IS_ENABLED(CONFIG_IPV6)
 		if (use_ipv6) {

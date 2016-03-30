@@ -54,6 +54,13 @@
 #include <net/ip6_route.h>
 #endif
 
+/* madcapable version.  */
+#include <madcap.h>
+
+static int madcap_enable __read_mostly = 0;
+module_param_named (madcap_enable, madcap_enable, int, 0444);
+MODULE_PARM_DESC (madcap_enable, "if 1, madcap offload is enabled.");
+
 /*
    Problems & solutions
    --------------------
@@ -230,6 +237,7 @@ static void __gre_xmit(struct sk_buff *skb, struct net_device *dev,
 {
 	struct ip_tunnel *tunnel = netdev_priv(dev);
 	struct tnl_ptk_info tpi;
+	struct net_device *mcdev;	/* madcap device */
 
 	tpi.flags = tunnel->parms.o_flags;
 	tpi.proto = proto;
@@ -240,6 +248,14 @@ static void __gre_xmit(struct sk_buff *skb, struct net_device *dev,
 
 	/* Push GRE header. */
 	gre_build_header(skb, &tpi, tunnel->tun_hlen);
+
+	if (madcap_enable) {
+		mcdev = __dev_get_by_index (dev_net (dev), tunnel->parms.link);
+		if (mcdev && get_madcap_ops (mcdev)) {
+			madcap_queue_xmit (skb, mcdev);
+			return;
+		}
+	}
 
 	skb_set_inner_protocol(skb, tpi.proto);
 

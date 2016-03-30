@@ -18,7 +18,8 @@ obj-protocol-drivers := \
 obj-device-drivers := \
 	device-drivers-$(kernel_version)/e1000/
 
-obj-y := $(obj-madcap) $(obj-device-drivers)
+obj-y := $(obj-madcap) $(obj-softwares) \
+	$(obj-device-drivers) $(obj-protocol-drivers)
 
 subdir-ccflags-y := -I$(src)/include $(flag_ovbench_$(OVBENCH))
 

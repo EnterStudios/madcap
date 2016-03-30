@@ -454,10 +454,16 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	struct iphdr *iph;
 	struct udphdr *uh;
 	struct ethhdr *eth;
+	struct dst_entry *dst;
 
-	/* check: is this packet from acquiring device ? */
+	/* check: is this packet from acquiring device.
+	 * In madcap mode, ip_route_output_key is not needed, so
+	 * original destination of first routing lookup for the inner
+	 * packet is preserved.
+	 */
+	dst = skb_dst (skb);
 	for (n = 0; n < SFMC_VDEV_MAX; n++) {
-		if (sfmc->vdev[n] == skb->dev)
+		if (sfmc->vdev[n] == dst->dev)
 			goto encap;
 	}
 	return 0;

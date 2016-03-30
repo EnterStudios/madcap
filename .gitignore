@@ -4,11 +4,13 @@
 .*.cmd
 .tmp*
 .*.swp
-setup.sh
-refresh.sh
 modules.order
 Module.symvers
 *.out
 core
-
 *.o.d
+
+# my test scripts
+setup.sh
+refresh.sh
+e1000-reset.sh

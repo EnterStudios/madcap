@@ -30,6 +30,8 @@ struct sfmc {
 	struct net_device 	*dev;	/* physical device */
 	rwlock_t		lock;
 
+	u64			id;	/* h/w id for switchdev */
+
 	struct net_device	*vdev[SFMC_VDEV_MAX];	/* acquiring device */
 
 	struct hlist_head	sfmc_table[SFMC_HASH_SIZE]; /* sfmc_table */

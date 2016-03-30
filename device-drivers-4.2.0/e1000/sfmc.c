@@ -12,6 +12,14 @@
 #include "e1000.h"
 #define SFMC_NETDEV_PRIV       e1000_adapter
 
+#undef pr_fmt
+#define pr_fmt(fmt) KBUILD_MODNAME "-sfmc: " fmt "\n"
+
+#undef pr_debug
+#define pr_debug(fmt, ...) \
+	printk(KERN_INFO pr_fmt("%s: "fmt) , __func__, ##__VA_ARGS__)
+
+
 /* MadCap locator-lookup table structure. this is hash table. */
 struct sfmc_table {
 	struct hlist_node	hlist;	/* sfmc->sfmc_table[] */
@@ -225,7 +233,7 @@ sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
 	pn->data = sf;
 	list_add_rcu (&sf->list, &sfmc->fib_list);
 
-	pr_debug ("add fib %pI4/%d -> %pI4\n", &network, len, &gateway);
+	pr_debug ("add fib %pI4/%d->%pI4", &network, len, &gateway);
 
 	return sf;
 }
@@ -236,7 +244,7 @@ sfmc_fib_delete (struct sfmc_fib *sf)
 	if (!sf)
 		return;
 
-	pr_debug ("add fib %pI4/%d -> %pI4\n",
+	pr_debug ("delete fib %pI4/%d->%pI4",
 		  &sf->network, sf->len, &sf->gateway);
 
 	list_del_rcu (&sf->list);
@@ -340,12 +348,12 @@ sfmc_llt_entry_add (struct net_device *dev, struct madcap_obj *obj)
 	struct madcap_obj_entry *oe = MADCAP_OBJ_ENTRY (obj);
 	
 	st = sfmc_table_find (sfmc, oe->id);
-	if (!st)
+	if (st)
 		return -EEXIST;
 
 	st = sfmc_table_add (sfmc, oe);
 	if (!st)
-		return -ENOENT;
+		return -ENOMEM;
 
 	return 0;
 }
@@ -612,7 +620,7 @@ sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
 
 	skb = alloc_skb (size, GFP_ATOMIC);
 	if (!skb) {
-		pr_info ("failed to alloc skb for arp req.\n");
+		pr_info ("failed to alloc skb for arp req.");
 		return;
 	}
 
@@ -646,39 +654,69 @@ sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
 
 /* switchdev ops */
 
-static inline __be32
-extract_gateway_addr_from_fib_info (struct fib_info *fi)
+static int
+sfmc_port_attr_set (struct net_device *dev, struct switchdev_attr *attr)
 {
-	struct fib_nh *nh;
+	return -ENOTSUPP;
+}
 
-	/* get first gateway address for this fib. */
-	if (fi->fib_nhs < 1)
-		return 0;
+static int
+sfmc_port_attr_get (struct net_device *dev, struct switchdev_attr *attr)
+{
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
 
-	nh = fi->fib_nh;
-	return nh->nh_gw;
+	switch (attr->id) {
+	case SWITCHDEV_ATTR_PORT_PARENT_ID:
+		/* only this is needed by switchdev_get_dev_by_nhs() for
+		 * switchdev_fib_ipv4_add() */
+		memcpy (&attr->u.ppid.id, &sfmc->id, attr->u.ppid.id_len);
+		break;
+	default :
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
 }
 
 static int
 sfmc_port_obj_add (struct net_device *dev, struct switchdev_obj *obj)
 {
 	int err = 0;
-	__be32 gateway;
+	__be32 gateway, network;
 	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct sfmc_fib *sf;
 	struct switchdev_obj_ipv4_fib *fib;
 
-	/* XXX: obj->trans should be handled here ? */
+	switch (obj->trans) {
+	case SWITCHDEV_TRANS_PREPARE:
+	case SWITCHDEV_TRANS_ABORT:
+		/* nothing to do for prepare phase because I'm fishy
+		   software emulation :) */
+		return 0;
+	case SWITCHDEV_TRANS_COMMIT:
+		break;
+	default:
+		pr_debug ("unknown switchdev trans %d", obj->trans);
+		return -ENOTSUPP;
+	}
 
 	switch (obj->id) {
 	case SWITCHDEV_OBJ_IPV4_FIB:
 		fib = &obj->u.ipv4_fib;
-		gateway = extract_gateway_addr_from_fib_info (fib->fi);
-		if (gateway == 0)
-			return -EINVAL;
-		sf = sfmc_fib_add (sfmc, fib->dst, fib->dst_len, gateway);
-		if (!sf)
+		gateway = fib->fi->fib_nh->nh_gw;
+		network = htonl (fib->dst);
+		if (gateway == 0) {
+			pr_debug ("no install %pI4/%d->%pI4",
+				  &network, fib->dst_len, &gateway);
+			err = 0;
+			break;
+		}
+
+		sf = sfmc_fib_add (sfmc, network, fib->dst_len, gateway);
+		if (!sf) {
+			pr_debug ("sf is null");
 			return -ENOMEM;
+		}
 		err = 0;
 		break;
 
@@ -697,10 +735,12 @@ sfmc_port_obj_del (struct net_device *dev, struct switchdev_obj *obj)
 	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct switchdev_obj_ipv4_fib *fib;
 
+	pr_debug ("switchdev_ops_obj_del is called!!");
+
 	switch (obj->id) {
 	case SWITCHDEV_OBJ_IPV4_FIB:
 		fib = &obj->u.ipv4_fib;
-		err = sfmc_fib_del (sfmc, fib->dst, fib->dst_len);
+		err = sfmc_fib_del (sfmc, htonl (fib->dst), fib->dst_len);
 		break;
 
 	default:
@@ -712,8 +752,10 @@ sfmc_port_obj_del (struct net_device *dev, struct switchdev_obj *obj)
 }
 
 static const struct switchdev_ops sfmc_switchdev_ops = {
-	.switchdev_port_obj_add	= sfmc_port_obj_add,
-	.switchdev_port_obj_del	= sfmc_port_obj_del,
+	.switchdev_port_attr_get	= sfmc_port_attr_get,
+	.switchdev_port_attr_set	= sfmc_port_attr_set,
+	.switchdev_port_obj_add		= sfmc_port_obj_add,
+	.switchdev_port_obj_del		= sfmc_port_obj_del,
 };
 
 
@@ -786,8 +828,10 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	sfmc->arp_timer.data = (unsigned long) sfmc;
 	mod_timer (&sfmc->arp_timer, jiffies + (1 * HZ));
 
-	/* add switchdev_ops for physical device netdev */
+	/* initialize switchdev_ops */
+	memcpy (&sfmc->id, dev->perm_addr, ETH_ALEN);
 	dev->switchdev_ops = &sfmc_switchdev_ops;
+	pr_info ("%s sfmc switchdev id %016llx", dev->name, sfmc->id);
 
 	/* regsiter madcap ops */
 	err = madcap_register_device (dev, &sfmc_madcap_ops);
@@ -809,6 +853,8 @@ sfmc_exit (struct sfmc *sfmc)
 	del_timer_sync (&sfmc->arp_timer);
 	sfmc_table_destroy (sfmc);
 	sfmc_fib_destroy (sfmc);
+
+	madcap_unregister_device (sfmc->dev);
 
 	return 0;
 }

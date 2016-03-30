@@ -8,11 +8,17 @@ flag_ovbench_no =
 
 kernel_version=$(shell uname -r | cut -d '-' -f 1)
 
-obj-y := madcap/ raven/ netdevgen/	\
+obj-madcap := madcap/
+obj-softwares := raven/ netdevgen/
+obj-protocol-drivers := \
 	protocol-drivers-$(kernel_version)/gre/		\
 	protocol-drivers-$(kernel_version)/ipip/	\
 	protocol-drivers-$(kernel_version)/vxlan/	\
-	protocol-drivers-$(kernel_version)/nsh/		\
+	protocol-drivers-$(kernel_version)/nsh/
+obj-device-drivers := \
+	device-drivers-$(kernel_version)/e1000/
+
+obj-y := $(obj-madcap) $(obj-device-drivers)
 
 subdir-ccflags-y := -I$(src)/include $(flag_ovbench_$(OVBENCH))
 

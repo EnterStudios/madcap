@@ -1,10 +1,11 @@
 
 #include <linux/etherdevice.h>
 #include <linux/if_ether.h> 
-#include <linux/if_arp.h>
+#include <net/netevent.h>
 #include <net/arp.h>
-#include <net/switchdev.h>
+#include <net/neighbour.h>
 #include <net/ip_fib.h>
+#include <net/switchdev.h>
 
 #include "sfmc.h"
 
@@ -31,25 +32,6 @@ struct sfmc_table {
 };
 
 
-/* FIB structure and ARP handling */
-
-enum {
-	ARP_PROBE,
-	ARP_REACHABLE,
-	ARP_REPROBE,
-};
-/* PROBE    -> repeating arp req until recv arp rep.
- * RECHABLE -> set when recv arp rep. decrement ttl.
- * REPROBE  -> set when ttl of REACHABLE becomes 0.
- * 	if ttl % INTERVAL = 0, send arp req.
- * 	if arp ttl becomes 0, state is set to PROBE.
- *
- * if recv arp repp, check all sfmc_fib.
- */
-
-#define ARP_PROBE_INTERVAL	3	/* interval of arp req */
-#define ARP_REACH_LIFETIME	60	/* decrement in each sec */
-#define ARP_PROBE_LIFETIME	60	/* lifetime with arp req */
 
 struct sfmc_fib {
 	struct list_head	list;	/* sfmc->fib_list */
@@ -63,30 +45,8 @@ struct sfmc_fib {
 
 	__be32		gateway;	/* gateway address	*/
 	u8		mac[ETH_ALEN];	/* gateway ma address	*/
-
-	int		arp_state;	/* arp state */
-	int		arp_ttl;	/* lifetime */
+	u8		nud_state;	/* neighbour state */
 };
-
-
-struct arpbody {
-	unsigned char ar_sha[ETH_ALEN];
-	unsigned char ar_sip[4];
-	unsigned char ar_tha[ETH_ALEN];
-	unsigned char ar_tip[4];
-};
-
-#define maccopy(a, b)					\
-	do {						\
-		b[0] = a[0]; b[1] = a[1]; b[2] = a[2];	\
-		b[3] = a[3]; b[4] = a[4]; b[5] = a[5];	\
-	} while (0)
-
-#define macbcast(b)					\
-	do {						\
-		b[0] = 0xFF; b[1] = 0xFF; b[2] = 0xFF;	\
-		b[3] = 0xFF; b[4] = 0xFF; b[5] = 0xFF;	\
-	} while (0)
 
 
 static inline struct sfmc *
@@ -226,8 +186,6 @@ sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
 	sf->network	= network;
 	sf->len		= len;
 	sf->gateway	= gateway;
-	sf->arp_state	= ARP_PROBE;
-	sf->arp_ttl	= ARP_PROBE_LIFETIME;
 	INIT_LIST_HEAD (&sf->list);
 
 	pn->data = sf;
@@ -501,20 +459,32 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	return 0;
 
 encap:
+
+	/* lookup destination node from locator-lookup-table */
 	id = extract_id_from_packet (skb, &sfmc->oc);
 	st = sfmc_table_find (sfmc, id);
-
-	/* find default destination */
 	st = (st) ? st : sfmc_table_find (sfmc, id);
-
 	if (!st) {
 		pr_debug ("locator lookup table not found\n");
 		return -ENOENT;
 	}
 
+	/* lookup ipv4 route and neighbour for dst node */
+	sf = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
+	if (!sf) {
+		pr_debug ("no fib entry for %pI4", &st->oe.dst);
+		return -ENOENT;
+	}
+	if (!(sf->nud_state & NUD_VALID)) {
+		pr_debug ("neighstate is not VALID for %pI4", &sf->gateway);
+		return -ENOENT;
+	}
+
+	/* ok, destination node is found, ip route is found and
+	 * neighbour state is valid. start to encap the pcaket! */
+
 	/* encap udp */
 	if (sfmc->ou.encap_enable) {
-
 		uh = (struct udphdr *) __skb_push (skb, sizeof (*uh));
 		skb_reset_transport_header (skb);
 		uh->dest	= sfmc->ou.dst_port;
@@ -526,7 +496,6 @@ encap:
 	/* encap ip */
 	iph = (struct iphdr *) __skb_push (skb, sizeof (*iph));
 	skb_reset_network_header (skb);
-
 	iph->version	= 4;
 	iph->ihl	= sizeof (*iph) >> 2;
 	iph->frag_off	= 0;
@@ -538,119 +507,57 @@ encap:
 	iph->saddr	= sfmc->oc.src;
 	iph->check	= ipchecksum (skb->data, sizeof (*iph), 0);
 
-	/* arp resolve and set ethernet header */
-	sf = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
-	if (!sf) {
-		pr_debug ("no fib entry for %pI4\n", &st->oe.dst);
-		return -ENOENT;
-	}
-
-	if (sf->arp_state == ARP_REACHABLE || sf->arp_state == ARP_REPROBE) {
-		pr_debug ("no arp entry for %pI4\n", &st->oe.dst);
-		return -ENOENT;
-	}
-
+	/* add ethernet header */
 	eth = (struct ethhdr *) __skb_push (skb, sizeof (*eth));
 	skb_reset_mac_header (skb);
-	maccopy (sf->mac, eth->h_dest);
-	maccopy (dev->perm_addr, eth->h_source);
+	memcpy (eth->h_dest, sf->mac, ETH_ALEN);
+	memcpy (eth->h_source, dev->perm_addr, ETH_ALEN);
 	eth->h_proto = htons (ETH_P_IP);
 
 	return 0;
 }
 
 
-/* arp related code */
+/* neighbour resolve code inspired by rocker_port_ipv4_resolve.
+ * notifier block codes to track neighbour update is in below. */
 
 static void
-sfmc_fib_arp_update (struct sfmc * sfmc, struct arpbody *rep)
+sfmc_neigh_write (struct sfmc_fib *sf, struct neighbour *n)
 {
-	struct sfmc_fib *sf;
+	memcpy (sf->mac, n->ha, ETH_ALEN);
+	sf->nud_state = n->nud_state;
 
-	list_for_each_entry_rcu (sf, &sfmc->fib_list, list) {
-		if (memcmp (&sf->gateway, rep->ar_sip, 4) == 0) {
-			if (sf->arp_state == ARP_PROBE ||
-			    sf->arp_state == ARP_REPROBE) {
-				memcpy (sf->mac, rep->ar_sha, ETH_ALEN);
-				sf->arp_state = ARP_REACHABLE;
-				sf->arp_ttl = ARP_REACH_LIFETIME;
-			}
-		}
-	}
+	pr_debug ("%pI4->%02x:%02x:%02x:%02x:%02x:%02x, %s",
+		  &sf->gateway,
+		  n->ha[0],n->ha[1],n->ha[2],
+		  n->ha[3],n->ha[3],n->ha[5],
+		  (sf->nud_state & NUD_VALID) ? "valid" : "no-valid");
 }
 
-void
-sfmc_snoop_arp (struct sk_buff *skb)
+static int
+sfmc_neigh_resolve (struct sfmc *sfmc, struct sfmc_fib *sf)
 {
-	/* snoop arp reply for update fib_tree */
-	
-	struct arphdr *arp;
-	struct arpbody *rep;
-	struct net_device *dev = skb->dev;
-	struct sfmc *sfmc = netdev_get_sfmc (dev);
+	int err = 0;
+	__be32 ip_addr = sf->gateway;
+	struct neighbour *n;
 
-	if (skb->protocol != htons (ETH_P_ARP))
-		return;
-
-	arp = arp_hdr (skb);
-	if (arp->ar_pro == htons (ETH_P_IP) &&
-	    arp->ar_op == htons (ARPOP_REPLY)) {
-		rep = (struct arpbody *) (arp + 1);
-		if (memcmp (rep->ar_tha, dev->perm_addr, ETH_ALEN) == 0 &&
-		    memcmp (rep->ar_tip, &sfmc->oc.src, 4) == 0) {
-			/* this arp reply is for this interface. learn it! */
-			sfmc_fib_arp_update (sfmc, rep);
-		}
-	}
-}
-
-static void
-sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
-{
-	/* make and send arp requeset for sf->mac via dev */
-
-	struct net_device *dev = sfmc->dev;
-
-	struct sk_buff *skb;
-	struct ethhdr *eth;
-	struct arphdr *arp;
-	struct arpbody *req;
-
-	size_t size = sizeof (*eth) + sizeof (*arp) + sizeof (*req);
-
-	skb = alloc_skb (size, GFP_ATOMIC);
-	if (!skb) {
-		pr_info ("failed to alloc skb for arp req.");
-		return;
+	n = __ipv4_neigh_lookup (sfmc->dev, (__force u32)ip_addr);
+	if (!n) {
+		n = neigh_create (&arp_tbl, &ip_addr, sfmc->dev);
+		if (IS_ERR (n))
+			return IS_ERR (n);
 	}
 
-	/* build arp header */
+	if (n->nud_state & NUD_VALID)
+		sfmc_neigh_write (sf, n);
+	else
+		neigh_event_send (n, NULL);
 
-	req = (struct arpbody *) skb_put (skb, sizeof (*req));
-	memset (req, 0, sizeof (*req));
-	memcpy (req->ar_sha, dev->perm_addr, ETH_ALEN);
-	memcpy (req->ar_sip, &sfmc->oc.src, sizeof (sfmc->oc.src));
-	memcpy (req->ar_tip, &sf->gateway, sizeof (sf->gateway));
+	neigh_release (n);
 
-	arp = (struct arphdr *) skb_put (skb, sizeof (*arp));
-	arp->ar_hrd	= htons (ARPHRD_ETHER);
-	arp->ar_pro 	= htons (ETH_P_IP);
-	arp->ar_hln	= ETH_ALEN;
-	arp->ar_pln	= 4;
-	arp->ar_op	= htons (ARPOP_REQUEST);
-
-	/* build ethernet header */
-	eth = (struct ethhdr *) skb_put (skb, sizeof (*eth));
-	macbcast (eth->h_dest);
-	maccopy (dev->perm_addr, eth->h_source);
-	eth->h_proto = htons (ETH_P_ARP);
-
-
-	skb->protocol = htons (ETH_P_ARP);
-	skb->dev = dev;
-
-	arp_xmit (skb);
+	return err;
 }
+
 
 /* switchdev ops */
 
@@ -717,6 +624,9 @@ sfmc_port_obj_add (struct net_device *dev, struct switchdev_obj *obj)
 			pr_debug ("sf is null");
 			return -ENOMEM;
 		}
+
+		sfmc_neigh_resolve (sfmc, sf);
+
 		err = 0;
 		break;
 
@@ -759,50 +669,47 @@ static const struct switchdev_ops sfmc_switchdev_ops = {
 };
 
 
-/* arp handler */
+/* neighbour update handler */
+
 static void
-sfmc_arp_processor (unsigned long arg)
+sfmc_neigh_update (struct net_device *dev, struct neighbour *n)
 {
-	unsigned long next_timer;
-	struct sfmc *sfmc = (struct sfmc *) arg;
+	__be32 ip_addr = *(__be32 *) n->primary_key;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct sfmc_fib *sf;
 
-#define time_for_send_arp_req(sf) (sf->arp_ttl % ARP_PROBE_INTERVAL == 0)
-#define decrement_arp_ttl(sf, max)					\
-	do {								\
-		sf->arp_ttl = (sf->arp_ttl == 0) ? max : sf->arp_ttl - 1; \
-	} while (0)
-
 	list_for_each_entry_rcu (sf, &sfmc->fib_list, list) {
-		/* check arp state and process */
-		switch (sf->arp_state) {
-		case ARP_PROBE :
-			if (time_for_send_arp_req (sf))
-				sfmc_send_arp (sfmc, sf);
-
-			decrement_arp_ttl (sf, ARP_PROBE_LIFETIME);
-			break;
-
-		case ARP_REACHABLE :
-			decrement_arp_ttl (sf, 0);
-			if (sf->arp_ttl == 0)
-				sf->arp_state = ARP_REPROBE;
-			break;
-
-		case ARP_REPROBE :
-			if (time_for_send_arp_req (sf))
-				sfmc_send_arp (sfmc, sf);
-
-			decrement_arp_ttl (sf, 0);
-			if (sf->arp_ttl == 0)
-				sf->arp_state = ARP_PROBE;
-			break;
+		if (sf->gateway == ip_addr) {
+			sfmc_neigh_write (sf, n);
 		}
 	}
-
-	next_timer = jiffies + (1 * HZ);
-	mod_timer (&sfmc->arp_timer, next_timer);
 }
+
+static int
+sfmc_neigh_update_event (struct notifier_block *unused, unsigned long event,
+			 void *ptr)
+{
+	struct net_device *dev;
+	struct neighbour *n = ptr;
+
+	switch (event) {
+	case NETEVENT_NEIGH_UPDATE:
+		if (n->tbl != &arp_tbl)
+			return NOTIFY_DONE;
+		dev = n->dev;
+		if (dev->switchdev_ops != &sfmc_switchdev_ops) {
+			return NOTIFY_DONE;
+		}
+
+		sfmc_neigh_update (dev, n);
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block sfmc_netevent_nb __read_mostly = {
+	.notifier_call = sfmc_neigh_update_event,
+};
 
 int
 sfmc_init (struct sfmc *sfmc, struct net_device *dev)
@@ -822,11 +729,8 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	INIT_LIST_HEAD (&sfmc->fib_list);
 	sfmc->fib_tree = New_Patricia (32);
 
-	/* init arp processor timer */
-	init_timer_deferrable (&sfmc->arp_timer);
-	sfmc->arp_timer.function = sfmc_arp_processor;
-	sfmc->arp_timer.data = (unsigned long) sfmc;
-	mod_timer (&sfmc->arp_timer, jiffies + (1 * HZ));
+	/* register neighbour handle notifier */
+	register_netevent_notifier (&sfmc_netevent_nb);
 
 	/* initialize switchdev_ops */
 	memcpy (&sfmc->id, dev->perm_addr, ETH_ALEN);
@@ -840,20 +744,16 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 		return err;
 	}
 
+
 	return 0;
 }
 
 int
 sfmc_exit (struct sfmc *sfmc)
 {
-	/* stop arp processor.
-	 * destroy sfmc_table and sfmc_fib tree.
-	 */
-
-	del_timer_sync (&sfmc->arp_timer);
+	unregister_netevent_notifier (&sfmc_netevent_nb);
 	sfmc_table_destroy (sfmc);
 	sfmc_fib_destroy (sfmc);
-
 	madcap_unregister_device (sfmc->dev);
 
 	return 0;

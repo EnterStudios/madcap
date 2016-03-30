@@ -4008,9 +4008,6 @@ static void e1000_receive_skb(struct e1000_adapter *adapter, u8 status,
 {
 	skb->protocol = eth_type_trans(skb, adapter->netdev);
 
-	/* madcap software emulation */
-	sfmc_snoop_arp (skb);
-
 	if (status & E1000_RXD_STAT_VP) {
 		u16 vid = le16_to_cpu(vlan) & E1000_RXD_SPC_VLAN_MASK;
 

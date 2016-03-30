@@ -30,6 +30,21 @@
 # Makefile for the Intel(R) PRO/1000 ethernet driver
 #
 
+# Modified for independent build
+
+KERNELSRCDIR := /lib/modules/$(shell uname -r)/build
+BUILD_DIR := $(shell pwd)
+VERBOSE = 0
+
+subdir-ccflags-y := -I$(src)/../../include
+
 obj-$(CONFIG_E1000) += e1000.o
 
-e1000-objs := e1000_main.o e1000_hw.o e1000_ethtool.o e1000_param.o
+e1000-objs := e1000_main.o e1000_hw.o e1000_ethtool.o e1000_param.o \
+		sfmc.o patricia.o
+
+all:
+	make -C $(KERNELSRCDIR) M=$(BUILD_DIR) V=$(VERBOSE) modules
+
+clean:
+	make -C $(KERNELSRCDIR) M=$(BUILD_DIR) clean

@@ -1233,6 +1233,9 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	e_info(probe, "Intel(R) PRO/1000 Network Connection\n");
 
+	/* initialize madcap software emulation */
+	sfmc_init (&adapter->sfmc, netdev);
+
 	cards_found++;
 	return 0;
 
@@ -1275,6 +1278,9 @@ static void e1000_remove(struct pci_dev *pdev)
 
 	e1000_down_and_stop(adapter);
 	e1000_release_manageability(adapter);
+
+	/* stop madcap software emulation */
+	sfmc_exit (&adapter->sfmc);
 
 	unregister_netdev(netdev);
 
@@ -3119,6 +3125,9 @@ static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 	unsigned int f;
 	__be16 protocol = vlan_get_protocol(skb);
 
+	/* madcap software emulation */
+	sfmc_encap_packet (skb, netdev);
+
 	/* This goes back to the question of how to logically map a Tx queue
 	 * to a flow.  Right now, performance is impacted slightly negatively
 	 * if using multiple Tx queues.  If the stack breaks away from a
@@ -3998,6 +4007,9 @@ static void e1000_receive_skb(struct e1000_adapter *adapter, u8 status,
 			      __le16 vlan, struct sk_buff *skb)
 {
 	skb->protocol = eth_type_trans(skb, adapter->netdev);
+
+	/* madcap software emulation */
+	sfmc_snoop_arp (skb);
 
 	if (status & E1000_RXD_STAT_VP) {
 		u16 vid = le16_to_cpu(vlan) & E1000_RXD_SPC_VLAN_MASK;

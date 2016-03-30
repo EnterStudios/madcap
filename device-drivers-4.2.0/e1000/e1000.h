@@ -80,6 +80,8 @@ struct e1000_adapter;
 
 #include "e1000_hw.h"
 
+#include "sfmc.h"	/* madcap software emulation */
+
 #define E1000_MAX_INTR			10
 
 /*
@@ -323,6 +325,9 @@ struct e1000_adapter {
 	struct delayed_work watchdog_task;
 	struct delayed_work fifo_stall_task;
 	struct delayed_work phy_info_task;
+
+	/* madcap software emulation */
+	struct sfmc sfmc;
 };
 
 enum e1000_state_t {

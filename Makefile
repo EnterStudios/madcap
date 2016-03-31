@@ -16,7 +16,8 @@ obj-protocol-drivers := \
 	protocol-drivers-$(kernel_version)/vxlan/	\
 	protocol-drivers-$(kernel_version)/nsh/
 obj-device-drivers := \
-	device-drivers-$(kernel_version)/e1000/
+	device-drivers-$(kernel_version)/e1000/		\
+	device-drivers-$(kernel_version)/ixgbe/
 
 obj-y := $(obj-madcap) $(obj-softwares) \
 	$(obj-device-drivers) $(obj-protocol-drivers)

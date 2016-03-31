@@ -1,16 +1,25 @@
 
 #include <linux/etherdevice.h>
 #include <linux/if_ether.h> 
-#include <linux/if_arp.h>
+#include <net/netevent.h>
 #include <net/arp.h>
-#include <net/switchdev.h>
+#include <net/neighbour.h>
 #include <net/ip_fib.h>
+#include <net/switchdev.h>
 
 #include "sfmc.h"
 
 /* For ixgbe */
 #include "ixgbe.h"
 #define SFMC_NETDEV_PRIV       ixgbe_adapter
+
+#undef pr_fmt
+#define pr_fmt(fmt) KBUILD_MODNAME "-sfmc: " fmt "\n"
+
+#undef pr_debug
+#define pr_debug(fmt, ...) \
+	printk(KERN_INFO pr_fmt("%s: "fmt) , __func__, ##__VA_ARGS__)
+
 
 /* MadCap locator-lookup table structure. this is hash table. */
 struct sfmc_table {
@@ -23,29 +32,12 @@ struct sfmc_table {
 };
 
 
-/* FIB structure and ARP handling */
-
-enum {
-	ARP_PROBE,
-	ARP_REACHABLE,
-	ARP_REPROBE,
-};
-/* PROBE    -> repeating arp req until recv arp rep.
- * RECHABLE -> set when recv arp rep. decrement ttl.
- * REPROBE  -> set when ttl of REACHABLE becomes 0.
- * 	if ttl % INTERVAL = 0, send arp req.
- * 	if arp ttl becomes 0, state is set to PROBE.
- *
- * if recv arp repp, check all sfmc_fib.
- */
-
-#define ARP_PROBE_INTERVAL	3	/* interval of arp req */
-#define ARP_REACH_LIFETIME	60	/* decrement in each sec */
-#define ARP_PROBE_LIFETIME	60	/* lifetime with arp req */
 
 struct sfmc_fib {
 	struct list_head	list;	/* sfmc->fib_list */
 	struct rcu_head		rcu;
+
+	struct sfmc 	*sfmc;		/* parent */
 
 	patricia_node_t	*pn;		/* patricia node of this fib */
 	prefix_t	*prefix;	/* prefix of this fib	*/
@@ -55,30 +47,8 @@ struct sfmc_fib {
 
 	__be32		gateway;	/* gateway address	*/
 	u8		mac[ETH_ALEN];	/* gateway ma address	*/
-
-	int		arp_state;	/* arp state */
-	int		arp_ttl;	/* lifetime */
+	u8		nud_state;	/* neighbour state */
 };
-
-
-struct arpbody {
-	unsigned char ar_sha[ETH_ALEN];
-	unsigned char ar_sip[4];
-	unsigned char ar_tha[ETH_ALEN];
-	unsigned char ar_tip[4];
-};
-
-#define maccopy(a, b)					\
-	do {						\
-		b[0] = a[0]; b[1] = a[1]; b[2] = a[2];	\
-		b[3] = a[3]; b[4] = a[4]; b[5] = a[5];	\
-	} while (0)
-
-#define macbcast(b)					\
-	do {						\
-		b[0] = 0xFF; b[1] = 0xFF; b[2] = 0xFF;	\
-		b[3] = 0xFF; b[4] = 0xFF; b[5] = 0xFF;	\
-	} while (0)
 
 
 static inline struct sfmc *
@@ -213,19 +183,18 @@ sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
 
 	memset (sf, 0, sizeof (*sf));
 
+	sf->sfmc	= sfmc;
 	sf->pn		= pn;
 	sf->prefix	= prefix;
 	sf->network	= network;
 	sf->len		= len;
 	sf->gateway	= gateway;
-	sf->arp_state	= ARP_PROBE;
-	sf->arp_ttl	= ARP_PROBE_LIFETIME;
 	INIT_LIST_HEAD (&sf->list);
 
 	pn->data = sf;
 	list_add_rcu (&sf->list, &sfmc->fib_list);
 
-	pr_debug ("add fib %pI4/%d -> %pI4\n", &network, len, &gateway);
+	pr_debug ("add fib %pI4/%d->%pI4", &network, len, &gateway);
 
 	return sf;
 }
@@ -236,11 +205,11 @@ sfmc_fib_delete (struct sfmc_fib *sf)
 	if (!sf)
 		return;
 
-	pr_debug ("add fib %pI4/%d -> %pI4\n",
+	pr_debug ("delete fib %pI4/%d->%pI4",
 		  &sf->network, sf->len, &sf->gateway);
 
+	patricia_remove (sf->sfmc->fib_tree, sf->pn);
 	list_del_rcu (&sf->list);
-	kfree (sf->prefix);
 	kfree_rcu (sf, rcu);
 }
 
@@ -258,17 +227,18 @@ sfmc_fib_del (struct sfmc *sfmc, __be32 network, u8 len)
 	return 0;
 }
 
-
-static void
-patricia_destroy_fib (void * data)
-{
-	sfmc_fib_delete ((struct sfmc_fib *) data);
-}
-
 static void
 sfmc_fib_destroy (struct sfmc *sfmc)
 {
-	Destroy_Patricia (sfmc->fib_tree, patricia_destroy_fib);
+	struct list_head *p, *tmp;
+	struct sfmc_fib *sf;
+
+	list_for_each_safe (p, tmp, &sfmc->fib_list) {
+		sf = list_entry (p, struct sfmc_fib, list);
+		sfmc_fib_delete (sf);
+	}
+
+	kfree (sfmc->fib_tree);
 }
 
 
@@ -340,12 +310,12 @@ sfmc_llt_entry_add (struct net_device *dev, struct madcap_obj *obj)
 	struct madcap_obj_entry *oe = MADCAP_OBJ_ENTRY (obj);
 	
 	st = sfmc_table_find (sfmc, oe->id);
-	if (!st)
+	if (st)
 		return -EEXIST;
 
 	st = sfmc_table_add (sfmc, oe);
 	if (!st)
-		return -ENOENT;
+		return -ENOMEM;
 
 	return 0;
 }
@@ -484,41 +454,61 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	struct iphdr *iph;
 	struct udphdr *uh;
 	struct ethhdr *eth;
+	struct dst_entry *dst;
 
-	/* check: is this packet from acquiring device ? */
+	/* check: is this packet from acquiring device.
+	 * In madcap mode, ip_route_output_key is not needed, so
+	 * original destination of first routing lookup for the inner
+	 * packet is preserved.
+	 */
+	dst = skb_dst (skb);
+	if (!dst)
+		return 0;
+
 	for (n = 0; n < SFMC_VDEV_MAX; n++) {
-		if (sfmc->vdev[n] == skb->dev)
+		if (sfmc->vdev[n] == dst->dev)
 			goto encap;
 	}
+
 	return 0;
 
 encap:
+
+	/* lookup destination node from locator-lookup-table */
 	id = extract_id_from_packet (skb, &sfmc->oc);
 	st = sfmc_table_find (sfmc, id);
-
-	/* find default destination */
 	st = (st) ? st : sfmc_table_find (sfmc, id);
-
 	if (!st) {
 		pr_debug ("locator lookup table not found\n");
 		return -ENOENT;
 	}
 
+	/* lookup ipv4 route and neighbour for dst node */
+	sf = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
+	if (!sf) {
+		pr_debug ("no fib entry for %pI4", &st->oe.dst);
+		return -ENOENT;
+	}
+	if (!(sf->nud_state & NUD_VALID)) {
+		pr_debug ("neighstate is not VALID for %pI4", &sf->gateway);
+		return -ENOENT;
+	}
+
+	/* ok, destination node is found, ip route is found and
+	 * neighbour state is valid. start to encap the pcaket! */
+
 	/* encap udp */
 	if (sfmc->ou.encap_enable) {
-
 		uh = (struct udphdr *) __skb_push (skb, sizeof (*uh));
-		skb_reset_transport_header (skb);
 		uh->dest	= sfmc->ou.dst_port;
 		uh->source	= sfmc->ou.src_port;
 		uh->len		= htons (skb->len);
 		uh->check	= 0;	/* XXX */
+		skb_set_transport_header (skb, 0);
 	}
 
 	/* encap ip */
 	iph = (struct iphdr *) __skb_push (skb, sizeof (*iph));
-	skb_reset_network_header (skb);
-
 	iph->version	= 4;
 	iph->ihl	= sizeof (*iph) >> 2;
 	iph->frag_off	= 0;
@@ -529,156 +519,130 @@ encap:
 	iph->daddr	= st->oe.dst;
 	iph->saddr	= sfmc->oc.src;
 	iph->check	= ipchecksum (skb->data, sizeof (*iph), 0);
+	skb_set_network_header (skb, 0);
 
-	/* arp resolve and set ethernet header */
-	sf = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
-	if (!sf) {
-		pr_debug ("no fib entry for %pI4\n", &st->oe.dst);
-		return -ENOENT;
-	}
-
-	if (sf->arp_state == ARP_REACHABLE || sf->arp_state == ARP_REPROBE) {
-		pr_debug ("no arp entry for %pI4\n", &st->oe.dst);
-		return -ENOENT;
-	}
-
+	/* add ethernet header */
 	eth = (struct ethhdr *) __skb_push (skb, sizeof (*eth));
-	skb_reset_mac_header (skb);
-	maccopy (sf->mac, eth->h_dest);
-	maccopy (dev->perm_addr, eth->h_source);
+	memcpy (eth->h_dest, sf->mac, ETH_ALEN);
+	memcpy (eth->h_source, dev->perm_addr, ETH_ALEN);
 	eth->h_proto = htons (ETH_P_IP);
+	skb_set_mac_header (skb, 0);
 
 	return 0;
 }
 
 
-/* arp related code */
+/* neighbour resolve code inspired by rocker_port_ipv4_resolve.
+ * notifier block codes to track neighbour update is in below. */
 
 static void
-sfmc_fib_arp_update (struct sfmc * sfmc, struct arpbody *rep)
+sfmc_neigh_write (struct sfmc_fib *sf, struct neighbour *n)
 {
-	struct sfmc_fib *sf;
+	memcpy (sf->mac, n->ha, ETH_ALEN);
+	sf->nud_state = n->nud_state;
 
-	list_for_each_entry_rcu (sf, &sfmc->fib_list, list) {
-		if (memcmp (&sf->gateway, rep->ar_sip, 4) == 0) {
-			if (sf->arp_state == ARP_PROBE ||
-			    sf->arp_state == ARP_REPROBE) {
-				memcpy (sf->mac, rep->ar_sha, ETH_ALEN);
-				sf->arp_state = ARP_REACHABLE;
-				sf->arp_ttl = ARP_REACH_LIFETIME;
-			}
-		}
-	}
+	pr_debug ("%pI4->%02x:%02x:%02x:%02x:%02x:%02x, %s",
+		  &sf->gateway,
+		  n->ha[0],n->ha[1],n->ha[2],
+		  n->ha[3],n->ha[3],n->ha[5],
+		  (sf->nud_state & NUD_VALID) ? "valid" : "no-valid");
 }
 
-void
-sfmc_snoop_arp (struct sk_buff *skb)
+static int
+sfmc_neigh_resolve (struct sfmc *sfmc, struct sfmc_fib *sf)
 {
-	/* snoop arp reply for update fib_tree */
-	
-	struct arphdr *arp;
-	struct arpbody *rep;
-	struct net_device *dev = skb->dev;
-	struct sfmc *sfmc = netdev_get_sfmc (dev);
+	int err = 0;
+	__be32 ip_addr = sf->gateway;
+	struct neighbour *n;
 
-	if (skb->protocol != htons (ETH_P_ARP))
-		return;
+	pr_debug ("called");
 
-	arp = arp_hdr (skb);
-	if (arp->ar_pro == htons (ETH_P_IP) &&
-	    arp->ar_op == htons (ARPOP_REPLY)) {
-		rep = (struct arpbody *) (arp + 1);
-		if (memcmp (rep->ar_tha, dev->perm_addr, ETH_ALEN) == 0 &&
-		    memcmp (rep->ar_tip, &sfmc->oc.src, 4) == 0) {
-			/* this arp reply is for this interface. learn it! */
-			sfmc_fib_arp_update (sfmc, rep);
-		}
-	}
-}
-
-static void
-sfmc_send_arp (struct sfmc *sfmc, struct sfmc_fib *sf)
-{
-	/* make and send arp requeset for sf->mac via dev */
-
-	struct net_device *dev = sfmc->dev;
-
-	struct sk_buff *skb;
-	struct ethhdr *eth;
-	struct arphdr *arp;
-	struct arpbody *req;
-
-	size_t size = sizeof (*eth) + sizeof (*arp) + sizeof (*req);
-
-	skb = alloc_skb (size, GFP_ATOMIC);
-	if (!skb) {
-		pr_info ("failed to alloc skb for arp req.\n");
-		return;
+	n = __ipv4_neigh_lookup (sfmc->dev, (__force u32)ip_addr);
+	if (!n) {
+		n = neigh_create (&arp_tbl, &ip_addr, sfmc->dev);
+		if (IS_ERR (n))
+			return IS_ERR (n);
 	}
 
-	/* build arp header */
+	if (n->nud_state & NUD_VALID)
+		sfmc_neigh_write (sf, n);
+	else
+		neigh_event_send (n, NULL);
 
-	req = (struct arpbody *) skb_put (skb, sizeof (*req));
-	memset (req, 0, sizeof (*req));
-	memcpy (req->ar_sha, dev->perm_addr, ETH_ALEN);
-	memcpy (req->ar_sip, &sfmc->oc.src, sizeof (sfmc->oc.src));
-	memcpy (req->ar_tip, &sf->gateway, sizeof (sf->gateway));
+	neigh_release (n);
 
-	arp = (struct arphdr *) skb_put (skb, sizeof (*arp));
-	arp->ar_hrd	= htons (ARPHRD_ETHER);
-	arp->ar_pro 	= htons (ETH_P_IP);
-	arp->ar_hln	= ETH_ALEN;
-	arp->ar_pln	= 4;
-	arp->ar_op	= htons (ARPOP_REQUEST);
-
-	/* build ethernet header */
-	eth = (struct ethhdr *) skb_put (skb, sizeof (*eth));
-	macbcast (eth->h_dest);
-	maccopy (dev->perm_addr, eth->h_source);
-	eth->h_proto = htons (ETH_P_ARP);
-
-
-	skb->protocol = htons (ETH_P_ARP);
-	skb->dev = dev;
-
-	arp_xmit (skb);
+	return err;
 }
+
 
 /* switchdev ops */
 
-static inline __be32
-extract_gateway_addr_from_fib_info (struct fib_info *fi)
+static int
+sfmc_port_attr_set (struct net_device *dev, struct switchdev_attr *attr)
 {
-	struct fib_nh *nh;
+	return -ENOTSUPP;
+}
 
-	/* get first gateway address for this fib. */
-	if (fi->fib_nhs < 1)
-		return 0;
+static int
+sfmc_port_attr_get (struct net_device *dev, struct switchdev_attr *attr)
+{
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
 
-	nh = fi->fib_nh;
-	return nh->nh_gw;
+	switch (attr->id) {
+	case SWITCHDEV_ATTR_PORT_PARENT_ID:
+		/* only this is needed by switchdev_get_dev_by_nhs() for
+		 * switchdev_fib_ipv4_add() */
+		memcpy (&attr->u.ppid.id, &sfmc->id, attr->u.ppid.id_len);
+		break;
+	default :
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
 }
 
 static int
 sfmc_port_obj_add (struct net_device *dev, struct switchdev_obj *obj)
 {
 	int err = 0;
-	__be32 gateway;
+	__be32 gateway, network;
 	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct sfmc_fib *sf;
 	struct switchdev_obj_ipv4_fib *fib;
 
-	/* XXX: obj->trans should be handled here ? */
+	switch (obj->trans) {
+	case SWITCHDEV_TRANS_PREPARE:
+	case SWITCHDEV_TRANS_ABORT:
+		/* nothing to do for prepare phase because I'm fishy
+		   software emulation :) */
+		return 0;
+	case SWITCHDEV_TRANS_COMMIT:
+		break;
+	default:
+		pr_debug ("unknown switchdev trans %d", obj->trans);
+		return -ENOTSUPP;
+	}
 
 	switch (obj->id) {
 	case SWITCHDEV_OBJ_IPV4_FIB:
 		fib = &obj->u.ipv4_fib;
-		gateway = extract_gateway_addr_from_fib_info (fib->fi);
-		if (gateway == 0)
-			return -EINVAL;
-		sf = sfmc_fib_add (sfmc, fib->dst, fib->dst_len, gateway);
-		if (!sf)
+		gateway = fib->fi->fib_nh->nh_gw;
+		network = htonl (fib->dst);
+		if (gateway == 0) {
+			pr_debug ("no install %pI4/%d->%pI4",
+				  &network, fib->dst_len, &gateway);
+			err = 0;
+			break;
+		}
+
+		sf = sfmc_fib_add (sfmc, network, fib->dst_len, gateway);
+		if (!sf) {
+			pr_debug ("sf is null");
 			return -ENOMEM;
+		}
+
+		sfmc_neigh_resolve (sfmc, sf);
+
 		err = 0;
 		break;
 
@@ -697,10 +661,12 @@ sfmc_port_obj_del (struct net_device *dev, struct switchdev_obj *obj)
 	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct switchdev_obj_ipv4_fib *fib;
 
+	pr_debug ("switchdev_ops_obj_del is called!!");
+
 	switch (obj->id) {
 	case SWITCHDEV_OBJ_IPV4_FIB:
 		fib = &obj->u.ipv4_fib;
-		err = sfmc_fib_del (sfmc, fib->dst, fib->dst_len);
+		err = sfmc_fib_del (sfmc, htonl (fib->dst), fib->dst_len);
 		break;
 
 	default:
@@ -712,55 +678,57 @@ sfmc_port_obj_del (struct net_device *dev, struct switchdev_obj *obj)
 }
 
 static const struct switchdev_ops sfmc_switchdev_ops = {
-	.switchdev_port_obj_add	= sfmc_port_obj_add,
-	.switchdev_port_obj_del	= sfmc_port_obj_del,
+	.switchdev_port_attr_get	= sfmc_port_attr_get,
+	.switchdev_port_attr_set	= sfmc_port_attr_set,
+	.switchdev_port_obj_add		= sfmc_port_obj_add,
+	.switchdev_port_obj_del		= sfmc_port_obj_del,
 };
 
 
-/* arp handler */
+/* neighbour update handler */
+
 static void
-sfmc_arp_processor (unsigned long arg)
+sfmc_neigh_update (struct net_device *dev, struct neighbour *n)
 {
-	unsigned long next_timer;
-	struct sfmc *sfmc = (struct sfmc *) arg;
+	__be32 ip_addr = *(__be32 *) n->primary_key;
+	struct sfmc *sfmc = netdev_get_sfmc (dev);
 	struct sfmc_fib *sf;
 
-#define time_for_send_arp_req(sf) (sf->arp_ttl % ARP_PROBE_INTERVAL == 0)
-#define decrement_arp_ttl(sf, max)					\
-	do {								\
-		sf->arp_ttl = (sf->arp_ttl == 0) ? max : sf->arp_ttl - 1; \
-	} while (0)
-
 	list_for_each_entry_rcu (sf, &sfmc->fib_list, list) {
-		/* check arp state and process */
-		switch (sf->arp_state) {
-		case ARP_PROBE :
-			if (time_for_send_arp_req (sf))
-				sfmc_send_arp (sfmc, sf);
-
-			decrement_arp_ttl (sf, ARP_PROBE_LIFETIME);
-			break;
-
-		case ARP_REACHABLE :
-			decrement_arp_ttl (sf, 0);
-			if (sf->arp_ttl == 0)
-				sf->arp_state = ARP_REPROBE;
-			break;
-
-		case ARP_REPROBE :
-			if (time_for_send_arp_req (sf))
-				sfmc_send_arp (sfmc, sf);
-
-			decrement_arp_ttl (sf, 0);
-			if (sf->arp_ttl == 0)
-				sf->arp_state = ARP_PROBE;
-			break;
+		if (sf->gateway == ip_addr) {
+			sfmc_neigh_write (sf, n);
 		}
 	}
-
-	next_timer = jiffies + (1 * HZ);
-	mod_timer (&sfmc->arp_timer, next_timer);
 }
+
+static int
+sfmc_neigh_update_event (struct notifier_block *unused, unsigned long event,
+			 void *ptr)
+{
+	struct net_device *dev;
+	struct neighbour *n = ptr;
+
+	pr_debug ("called");
+
+	switch (event) {
+	case NETEVENT_NEIGH_UPDATE:
+		if (n->tbl != &arp_tbl)
+			return NOTIFY_DONE;
+		dev = n->dev;
+
+		if (dev->switchdev_ops != &sfmc_switchdev_ops)
+			return NOTIFY_DONE;
+
+		sfmc_neigh_update (dev, n);
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block sfmc_netevent_nb __read_mostly = {
+	.notifier_call = sfmc_neigh_update_event,
+};
 
 int
 sfmc_init (struct sfmc *sfmc, struct net_device *dev)
@@ -780,14 +748,10 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	INIT_LIST_HEAD (&sfmc->fib_list);
 	sfmc->fib_tree = New_Patricia (32);
 
-	/* init arp processor timer */
-	init_timer_deferrable (&sfmc->arp_timer);
-	sfmc->arp_timer.function = sfmc_arp_processor;
-	sfmc->arp_timer.data = (unsigned long) sfmc;
-	mod_timer (&sfmc->arp_timer, jiffies + (1 * HZ));
-
-	/* add switchdev_ops for physical device netdev */
+	/* initialize switchdev_ops */
+	memcpy (&sfmc->id, dev->perm_addr, ETH_ALEN);
 	dev->switchdev_ops = &sfmc_switchdev_ops;
+	pr_info ("%s sfmc switchdev id %016llx", dev->name, sfmc->id);
 
 	/* regsiter madcap ops */
 	err = madcap_register_device (dev, &sfmc_madcap_ops);
@@ -796,19 +760,19 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 		return err;
 	}
 
+	/* register neighbour handle notifier */
+	register_netevent_notifier (&sfmc_netevent_nb);
+
 	return 0;
 }
 
 int
 sfmc_exit (struct sfmc *sfmc)
 {
-	/* stop arp processor.
-	 * destroy sfmc_table and sfmc_fib tree.
-	 */
-
-	del_timer_sync (&sfmc->arp_timer);
+	unregister_netevent_notifier (&sfmc_netevent_nb);
 	sfmc_table_destroy (sfmc);
 	sfmc_fib_destroy (sfmc);
+	madcap_unregister_device (sfmc->dev);
 
 	return 0;
 }

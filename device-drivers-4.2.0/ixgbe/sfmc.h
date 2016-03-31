@@ -30,15 +30,14 @@ struct sfmc {
 	struct net_device 	*dev;	/* physical device */
 	rwlock_t		lock;
 
+	u64			id;	/* h/w id for switchdev */
+
 	struct net_device	*vdev[SFMC_VDEV_MAX];	/* acquiring device */
 
 	struct hlist_head	sfmc_table[SFMC_HASH_SIZE]; /* sfmc_table */
 	struct list_head	fib_list;	/* sfmc_fib list */
 	patricia_tree_t		*fib_tree;	/* ipv4 fib table
 						 * struct sfmc_fib */
-
-	struct timer_list	arp_timer;	/* arp handling */
-
 	struct madcap_obj_udp		ou;	/* udp encap config	*/
 	struct madcap_obj_config	oc;	/* offset and length */
 };
@@ -53,7 +52,5 @@ int sfmc_exit (struct sfmc *sfmc);
 /* add (udp), ip, and ethernet header in accordance with llt */
 int sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev);
 
-/* snoop arp packet. it must be inserted before netfi_rx(). */
-void sfmc_snoop_arp (struct sk_buff *skb);
 
 #endif

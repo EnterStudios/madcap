@@ -1622,9 +1622,6 @@ static void ixgbe_process_skb_fields(struct ixgbe_ring *rx_ring,
 static void ixgbe_rx_skb(struct ixgbe_q_vector *q_vector,
 			 struct sk_buff *skb)
 {
-	/* madcap software emulation */
-	sfmc_snoop_arp (skb);
-
 	if (ixgbe_qv_busy_polling(q_vector))
 		netif_receive_skb(skb);
 	else
@@ -8867,6 +8864,9 @@ static void ixgbe_remove(struct pci_dev *pdev)
 	if (netdev->reg_state == NETREG_REGISTERED)
 		unregister_netdev(netdev);
 
+	/* madcap software emulation */
+	sfmc_exit (&adapter->sfmc);
+
 #ifdef CONFIG_PCI_IOV
 	/*
 	 * Only disable SR-IOV on unload if the user specified the now
@@ -8898,9 +8898,6 @@ static void ixgbe_remove(struct pci_dev *pdev)
 
 	if (disable_dev)
 		pci_disable_device(pdev);
-
-	/* madcap software emulation */
-	sfmc_exit (&adapter->sfmc);
 }
 
 /**

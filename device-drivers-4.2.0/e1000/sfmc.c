@@ -335,6 +335,7 @@ sfmc_llt_cfg (struct net_device *dev, struct madcap_obj *obj)
 	if (memcmp (oc, &sfmc->oc, sizeof (*oc) != 0)) {
 		/* offset or length is changed. drop all table entry. */
 		sfmc_table_destroy (sfmc);
+		sfmc->oc = *oc;
 	}
 
 	return 0;
@@ -534,15 +535,15 @@ encap:
 		pr_debug ("no fib entry for %pI4", &st->oe.dst);
 		return -ENOENT;
 	}
-	if (sf->scope == RT_SCOPE_LINK && sf->nud_state != NUD_VALID) {
-		/* connected route. add host route and wait for
-		 * neighbor resolution */
+	if (sf->scope == RT_SCOPE_LINK && sf->gateway != st->oe.dst) {
+		/* this is connected route. add host route and wait
+		 * for neighbor resolution */
 		struct sfmc_fib *llsf;
-		pr_debug ("start to create connected fib");
-		llsf = sfmc_fib_create (sfmc, sf->network, sf->len,
+		pr_debug ("start to create connected fib %pI4", &st->oe.dst);
+		llsf = sfmc_fib_create (sfmc, st->oe.dst, 32,
 					st->oe.dst, RT_SCOPE_LINK,
 					GFP_ATOMIC);
-		queue_work (sfmc->sfmc_wq, &sf->ll_work);
+		queue_work (sfmc->sfmc_wq, &llsf->ll_work);
 		return -ENOENT;
 	}
 
@@ -573,9 +574,12 @@ encap:
 	iph->protocol	= sfmc->oc.proto;
 	iph->tos	= 0;
 	iph->ttl	= 64;
+	iph->tot_len	= htons (skb->len);
 	iph->daddr	= st->oe.dst;
 	iph->saddr	= sfmc->oc.src;
+	iph->check	= 0;
 	iph->check	= ipchecksum (skb->data, sizeof (*iph), 0);
+
 	skb_set_network_header (skb, 0);
 
 	/* add ethernet header */

@@ -21,6 +21,9 @@
 	printk(KERN_INFO pr_fmt("%s: "fmt) , __func__, ##__VA_ARGS__)
 
 
+static bool netevent_registered = false;
+
+
 /* MadCap locator-lookup table structure. this is hash table. */
 struct sfmc_table {
 	struct hlist_node	hlist;	/* sfmc->sfmc_table[] */
@@ -30,7 +33,6 @@ struct sfmc_table {
 
 	struct madcap_obj_entry	oe;
 };
-
 
 
 struct sfmc_fib {
@@ -555,8 +557,6 @@ sfmc_neigh_resolve (struct sfmc *sfmc, struct sfmc_fib *sf)
 	__be32 ip_addr = sf->gateway;
 	struct neighbour *n;
 
-	pr_debug ("called");
-
 	n = __ipv4_neigh_lookup (sfmc->dev, (__force u32)ip_addr);
 	if (!n) {
 		n = neigh_create (&arp_tbl, &ip_addr, sfmc->dev);
@@ -708,8 +708,6 @@ sfmc_neigh_update_event (struct notifier_block *unused, unsigned long event,
 	struct net_device *dev;
 	struct neighbour *n = ptr;
 
-	pr_debug ("called");
-
 	switch (event) {
 	case NETEVENT_NEIGH_UPDATE:
 		if (n->tbl != &arp_tbl)
@@ -761,7 +759,10 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	}
 
 	/* register neighbour handle notifier */
-	register_netevent_notifier (&sfmc_netevent_nb);
+	if (!netevent_registered) {
+		register_netevent_notifier (&sfmc_netevent_nb);
+		netevent_registered = true;
+	}
 
 	return 0;
 }
@@ -769,7 +770,11 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 int
 sfmc_exit (struct sfmc *sfmc)
 {
-	unregister_netevent_notifier (&sfmc_netevent_nb);
+	if (netevent_registered) {
+		unregister_netevent_notifier (&sfmc_netevent_nb);
+		netevent_registered = false;
+	}
+
 	sfmc_table_destroy (sfmc);
 	sfmc_fib_destroy (sfmc);
 	madcap_unregister_device (sfmc->dev);

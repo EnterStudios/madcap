@@ -15,6 +15,7 @@
 #include <linux/hash.h>
 #include <linux/rwlock.h>
 #include <linux/rculist.h>
+#include <linux/workqueue.h>
 #include <madcap.h>
 #include "patricia.h"	/* patricia trie */
 
@@ -40,6 +41,8 @@ struct sfmc {
 						 * struct sfmc_fib */
 	struct madcap_obj_udp		ou;	/* udp encap config	*/
 	struct madcap_obj_config	oc;	/* offset and length */
+
+	struct workqueue_struct		*sfmc_wq;
 };
 
 

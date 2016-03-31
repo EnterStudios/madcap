@@ -539,7 +539,7 @@ encap:
 		/* this is connected route. add host route and wait
 		 * for neighbor resolution */
 		struct sfmc_fib *llsf;
-		pr_debug ("start to create connected fib %pI4", &st->oe.dst);
+		pr_debug ("create link local fib %pI4", &st->oe.dst);
 		llsf = sfmc_fib_create (sfmc, st->oe.dst, 32,
 					st->oe.dst, RT_SCOPE_LINK,
 					GFP_ATOMIC);
@@ -588,8 +588,6 @@ encap:
 	memcpy (eth->h_source, dev->perm_addr, ETH_ALEN);
 	eth->h_proto = htons (ETH_P_IP);
 	skb_set_mac_header (skb, 0);
-
-	pr_debug ("encaped!");
 
 	return 0;
 }

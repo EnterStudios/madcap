@@ -210,7 +210,7 @@ sfmc_fib_insert (struct sfmc *sfmc, struct sfmc_fib *sf)
 	if (pn->data != NULL) {
 		pr_debug ("insert fib exist %pI4/%d", &sf->network, sf->len);
 		kfree (prefix);
-		return NULL;
+		return pn->data;
 	}
 
 	pn->data	= sf;

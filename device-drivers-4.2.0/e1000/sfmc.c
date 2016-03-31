@@ -6,6 +6,7 @@
 #include <net/neighbour.h>
 #include <net/ip_fib.h>
 #include <net/switchdev.h>
+#include <uapi/linux/rtnetlink.h>
 
 #include "sfmc.h"
 
@@ -21,6 +22,9 @@
 	printk(KERN_INFO pr_fmt("%s: "fmt) , __func__, ##__VA_ARGS__)
 
 
+static bool netevent_registered = false;
+
+
 /* MadCap locator-lookup table structure. this is hash table. */
 struct sfmc_table {
 	struct hlist_node	hlist;	/* sfmc->sfmc_table[] */
@@ -30,7 +34,6 @@ struct sfmc_table {
 
 	struct madcap_obj_entry	oe;
 };
-
 
 
 struct sfmc_fib {
@@ -44,11 +47,23 @@ struct sfmc_fib {
 
 	__be32		network;	/* destination network */
 	u8		len;		/* destination network prefix length */
+	enum rt_scope_t	scope;		/* fib_info->fib_scope */
 
 	__be32		gateway;	/* gateway address	*/
 	u8		mac[ETH_ALEN];	/* gateway ma address	*/
 	u8		nud_state;	/* neighbour state */
+
+	struct work_struct ll_work;	/* arp resolve for link local route */
 };
+
+
+/* prototypes */
+static void sfmc_ll_neigh_work (struct work_struct *work);
+
+static void sfmc_neigh_write (struct sfmc_fib *sf, struct neighbour *n);
+static int sfmc_neigh_resolve (struct sfmc *sfmc, struct sfmc_fib *sf);
+
+
 
 
 static inline struct sfmc *
@@ -160,41 +175,71 @@ sfmc_fib_find_best (struct sfmc *sfmc, __be32 network, u8 len)
 }
 
 static struct sfmc_fib *
-sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway)
+sfmc_fib_create (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway,
+		 enum rt_scope_t scope, int gfp)
 {
-	prefix_t *prefix;
-	patricia_node_t *pn;
 	struct sfmc_fib *sf;
 
-	prefix = kmalloc (sizeof (prefix_t), GFP_KERNEL);
-	memset (prefix, 0, sizeof (*prefix));
-	dst2prefix (network, len, prefix);
-
-	pn = patricia_lookup (sfmc->fib_tree, prefix);
-	if (pn->data != NULL) {
-		kfree (prefix);
-		return pn->data;
-	}
-
-	sf = (struct sfmc_fib *) kmalloc (sizeof (struct sfmc_fib),
-					  GFP_KERNEL);
+	sf = (struct sfmc_fib *) kmalloc (sizeof (struct sfmc_fib), gfp);
 	if (!sf)
 		return NULL;
 
 	memset (sf, 0, sizeof (*sf));
-
 	sf->sfmc	= sfmc;
-	sf->pn		= pn;
-	sf->prefix	= prefix;
 	sf->network	= network;
 	sf->len		= len;
 	sf->gateway	= gateway;
+	sf->scope	= scope;
 	INIT_LIST_HEAD (&sf->list);
+	INIT_WORK (&sf->ll_work, sfmc_ll_neigh_work);
 
-	pn->data = sf;
+	return sf;
+}
+
+static struct sfmc_fib *
+sfmc_fib_insert (struct sfmc *sfmc, struct sfmc_fib *sf)
+{
+	prefix_t *prefix;
+	patricia_node_t *pn;
+
+	prefix = kmalloc (sizeof (prefix_t), GFP_KERNEL);
+	memset (prefix, 0, sizeof (*prefix));
+	dst2prefix (sf->network, sf->len, prefix);
+	
+	pn = patricia_lookup (sfmc->fib_tree, prefix);
+	if (pn->data != NULL) {
+		pr_debug ("insert fib exist %pI4/%d", &sf->network, sf->len);
+		kfree (prefix);
+		return pn->data;
+	}
+
+	pn->data	= sf;
+	sf->pn		= pn;
+	sf->prefix	= prefix;
+
 	list_add_rcu (&sf->list, &sfmc->fib_list);
 
-	pr_debug ("add fib %pI4/%d->%pI4", &network, len, &gateway);
+	pr_debug ("insert fib %pI4/%d->%pI4",
+		  &sf->network, sf->len, &sf->gateway);
+
+	return sf;
+}
+
+static struct sfmc_fib *
+sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway,
+	      enum rt_scope_t scope)
+{
+	struct sfmc_fib *sf, *tmp;
+
+	sf = sfmc_fib_create (sfmc, network, len, gateway, scope, GFP_KERNEL);
+	if (!sf)
+		return NULL;
+
+	tmp = sfmc_fib_insert (sfmc, sf);
+	if (!tmp) {
+		kfree (sf);
+		return NULL;
+	}
 
 	return sf;
 }
@@ -489,6 +534,18 @@ encap:
 		pr_debug ("no fib entry for %pI4", &st->oe.dst);
 		return -ENOENT;
 	}
+	if (sf->scope == RT_SCOPE_LINK && sf->nud_state != NUD_VALID) {
+		/* connected route. add host route and wait for
+		 * neighbor resolution */
+		struct sfmc_fib *llsf;
+		pr_debug ("start to create connected fib");
+		llsf = sfmc_fib_create (sfmc, sf->network, sf->len,
+					st->oe.dst, RT_SCOPE_LINK,
+					GFP_ATOMIC);
+		queue_work (sfmc->sfmc_wq, &sf->ll_work);
+		return -ENOENT;
+	}
+
 	if (!(sf->nud_state & NUD_VALID)) {
 		pr_debug ("neighstate is not VALID for %pI4", &sf->gateway);
 		return -ENOENT;
@@ -528,48 +585,9 @@ encap:
 	eth->h_proto = htons (ETH_P_IP);
 	skb_set_mac_header (skb, 0);
 
+	pr_debug ("encaped!");
+
 	return 0;
-}
-
-
-/* neighbour resolve code inspired by rocker_port_ipv4_resolve.
- * notifier block codes to track neighbour update is in below. */
-
-static void
-sfmc_neigh_write (struct sfmc_fib *sf, struct neighbour *n)
-{
-	memcpy (sf->mac, n->ha, ETH_ALEN);
-	sf->nud_state = n->nud_state;
-
-	pr_debug ("%pI4->%02x:%02x:%02x:%02x:%02x:%02x, %s",
-		  &sf->gateway,
-		  n->ha[0],n->ha[1],n->ha[2],
-		  n->ha[3],n->ha[3],n->ha[5],
-		  (sf->nud_state & NUD_VALID) ? "valid" : "no-valid");
-}
-
-static int
-sfmc_neigh_resolve (struct sfmc *sfmc, struct sfmc_fib *sf)
-{
-	int err = 0;
-	__be32 ip_addr = sf->gateway;
-	struct neighbour *n;
-
-	n = __ipv4_neigh_lookup (sfmc->dev, (__force u32)ip_addr);
-	if (!n) {
-		n = neigh_create (&arp_tbl, &ip_addr, sfmc->dev);
-		if (IS_ERR (n))
-			return IS_ERR (n);
-	}
-
-	if (n->nud_state & NUD_VALID)
-		sfmc_neigh_write (sf, n);
-	else
-		neigh_event_send (n, NULL);
-
-	neigh_release (n);
-
-	return err;
 }
 
 
@@ -626,14 +644,15 @@ sfmc_port_obj_add (struct net_device *dev, struct switchdev_obj *obj)
 		fib = &obj->u.ipv4_fib;
 		gateway = fib->fi->fib_nh->nh_gw;
 		network = htonl (fib->dst);
-		if (gateway == 0) {
+		if (gateway == 0 && fib->fi->fib_scope != RT_SCOPE_LINK) {
 			pr_debug ("no install %pI4/%d->%pI4",
 				  &network, fib->dst_len, &gateway);
 			err = 0;
 			break;
 		}
 
-		sf = sfmc_fib_add (sfmc, network, fib->dst_len, gateway);
+		sf = sfmc_fib_add (sfmc, network, fib->dst_len, gateway,
+				   fib->fi->fib_scope);
 		if (!sf) {
 			pr_debug ("sf is null");
 			return -ENOMEM;
@@ -686,6 +705,43 @@ static const struct switchdev_ops sfmc_switchdev_ops = {
 /* neighbour update handler */
 
 static void
+sfmc_neigh_write (struct sfmc_fib *sf, struct neighbour *n)
+{
+	memcpy (sf->mac, n->ha, ETH_ALEN);
+	sf->nud_state = n->nud_state;
+
+	pr_debug ("%pI4->%02x:%02x:%02x:%02x:%02x:%02x, %s",
+		  &sf->gateway,
+		  n->ha[0],n->ha[1],n->ha[2],
+		  n->ha[3],n->ha[3],n->ha[5],
+		  (sf->nud_state & NUD_VALID) ? "valid" : "no-valid");
+}
+
+static int
+sfmc_neigh_resolve (struct sfmc *sfmc, struct sfmc_fib *sf)
+{
+	int err = 0;
+	__be32 ip_addr = sf->gateway;
+	struct neighbour *n;
+
+	n = __ipv4_neigh_lookup (sfmc->dev, (__force u32)ip_addr);
+	if (!n) {
+		n = neigh_create (&arp_tbl, &ip_addr, sfmc->dev);
+		if (IS_ERR (n))
+			return IS_ERR (n);
+	}
+
+	if (n->nud_state & NUD_VALID)
+		sfmc_neigh_write (sf, n);
+	else
+		neigh_event_send (n, NULL);
+
+	neigh_release (n);
+
+	return err;
+}
+
+static void
 sfmc_neigh_update (struct net_device *dev, struct neighbour *n)
 {
 	__be32 ip_addr = *(__be32 *) n->primary_key;
@@ -711,11 +767,12 @@ sfmc_neigh_update_event (struct notifier_block *unused, unsigned long event,
 		if (n->tbl != &arp_tbl)
 			return NOTIFY_DONE;
 		dev = n->dev;
-		if (dev->switchdev_ops != &sfmc_switchdev_ops) {
+
+		if (dev->switchdev_ops != &sfmc_switchdev_ops)
 			return NOTIFY_DONE;
-		}
 
 		sfmc_neigh_update (dev, n);
+		break;
 	}
 
 	return NOTIFY_DONE;
@@ -724,6 +781,25 @@ sfmc_neigh_update_event (struct notifier_block *unused, unsigned long event,
 static struct notifier_block sfmc_netevent_nb __read_mostly = {
 	.notifier_call = sfmc_neigh_update_event,
 };
+
+static void
+sfmc_ll_neigh_work (struct work_struct *work)
+{
+	/* arp resolution for link local (connected) host. */
+
+	struct sfmc_fib *sf, *tmp;
+
+	/* this sf is just after sfmc_fib_create. */
+	sf = container_of (work, struct sfmc_fib, ll_work);
+
+	tmp = sfmc_fib_insert (sf->sfmc, sf);
+	if (!tmp) {
+		/* the fib for this host entry is already created. */
+		kfree (sf);
+	}
+
+	sfmc_neigh_resolve (sf->sfmc, sf);
+}
 
 int
 sfmc_init (struct sfmc *sfmc, struct net_device *dev)
@@ -743,8 +819,12 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	INIT_LIST_HEAD (&sfmc->fib_list);
 	sfmc->fib_tree = New_Patricia (32);
 
-	/* register neighbour handle notifier */
-	register_netevent_notifier (&sfmc_netevent_nb);
+	/* init work queue for link local neighbor resolution */
+	sfmc->sfmc_wq = alloc_workqueue ("sfmc-ll-work-%s", 0, 0, dev->name);
+	if (!sfmc->sfmc_wq) {
+		pr_err ("failed to allocate work queue");
+		return -ENOMEM;
+	}
 
 	/* initialize switchdev_ops */
 	memcpy (&sfmc->id, dev->perm_addr, ETH_ALEN);
@@ -758,6 +838,11 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 		return err;
 	}
 
+	/* register neighbour handle notifier */
+	if (!netevent_registered) {
+		register_netevent_notifier (&sfmc_netevent_nb);
+		netevent_registered = true;
+	}
 
 	return 0;
 }
@@ -765,9 +850,14 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 int
 sfmc_exit (struct sfmc *sfmc)
 {
-	unregister_netevent_notifier (&sfmc_netevent_nb);
+	if (netevent_registered) {
+		unregister_netevent_notifier (&sfmc_netevent_nb);
+		netevent_registered = false;
+	}
+
 	sfmc_table_destroy (sfmc);
 	sfmc_fib_destroy (sfmc);
+	destroy_workqueue (sfmc->sfmc_wq);
 	madcap_unregister_device (sfmc->dev);
 
 	return 0;

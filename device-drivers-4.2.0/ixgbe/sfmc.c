@@ -1,4 +1,5 @@
 
+#include <linux/moduleparam.h>
 #include <linux/etherdevice.h>
 #include <linux/if_ether.h> 
 #include <net/netevent.h>
@@ -21,6 +22,10 @@
 #define pr_debug(fmt, ...) \
 	printk(KERN_INFO pr_fmt("%s: "fmt) , __func__, ##__VA_ARGS__)
 
+
+static int madcap_enable __read_mostly = 0;
+module_param_named (madcap_enable, madcap_enable, int, 0444);
+MODULE_PARM_DESC (madcap_enable, "if 1, madcap offload is enabled.");
 
 static bool netevent_registered = false;
 
@@ -502,6 +507,9 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 	struct ethhdr *eth;
 	struct dst_entry *dst;
 
+	if (!madcap_enable)
+		return 0;
+
 	/* check: is this packet from acquiring device.
 	 * In madcap mode, ip_route_output_key is not needed, so
 	 * original destination of first routing lookup for the inner
@@ -834,10 +842,12 @@ sfmc_init (struct sfmc *sfmc, struct net_device *dev)
 	pr_info ("%s sfmc switchdev id %016llx", dev->name, sfmc->id);
 
 	/* regsiter madcap ops */
-	err = madcap_register_device (dev, &sfmc_madcap_ops);
-	if (err < 0) {
-		netdev_err (dev, "failed to register madcap_ops.\n");
-		return err;
+	if (madcap_enable) {
+		err = madcap_register_device (dev, &sfmc_madcap_ops);
+		if (err < 0) {
+			netdev_err (dev, "failed to register madcap_ops.\n");
+			return err;
+		}
 	}
 
 	/* register neighbour handle notifier */
@@ -860,7 +870,9 @@ sfmc_exit (struct sfmc *sfmc)
 	sfmc_table_destroy (sfmc);
 	sfmc_fib_destroy (sfmc);
 	destroy_workqueue (sfmc->sfmc_wq);
-	madcap_unregister_device (sfmc->dev);
+
+	if (madcap_enable)
+		madcap_unregister_device (sfmc->dev);
 
 	return 0;
 }

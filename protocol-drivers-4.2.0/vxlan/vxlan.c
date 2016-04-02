@@ -1764,6 +1764,45 @@ err:
 }
 #endif
 
+static int vxlan_xmit_madcap (struct sk_buff *skb, struct net_device *dev)
+{
+	/* Transmit local packets over Vxlan via madcap capable
+         * device. Table lookup and outer IP/UDP headers
+         * are added by madcap device. This function only add
+         * vxlan header and enqueue the packets to madcap device.
+         */
+	int err;
+	struct vxlanhdr *vxh;
+	struct vxlan_dev *vxlan = netdev_priv (dev);
+
+	#ifdef OVBENCH
+	if (SKB_OVBENCH (skb))
+		skb->vxlan_xmit_skb_in = rdtsc ();
+	#endif
+
+	err = skb_cow_head (skb, VXLAN_HEADROOM + ETH_HLEN);
+	if (unlikely (err)) {
+		kfree_skb (skb);
+		return err;
+	}
+
+
+	skb = vlan_hwaccel_push_inside (skb);   /* XXX: needed? */
+	if (WARN_ON (!skb))
+		return -ENOMEM;
+
+
+	vxh = (struct vxlanhdr *) __skb_push (skb, sizeof (*vxh));
+	vxh->vx_flags = htonl (VXLAN_HF_VNI);
+	vxh->vx_vni = vxlan->default_dst.remote_vni;
+
+	skb_set_inner_protocol (skb, htons (ETH_P_TEB));
+
+
+	return madcap_queue_xmit (skb, vxlan->mcdev);
+}
+
+
 int vxlan_xmit_skb(struct rtable *rt, struct sock *sk, struct sk_buff *skb,
 		   __be32 src, __be32 dst, __u8 tos, __u8 ttl, __be16 df,
 		   __be16 src_port, __be16 dst_port,
@@ -2051,40 +2090,6 @@ tx_free:
 	dev_kfree_skb(skb);
 }
 
-static int vxlan_xmit_madcap (struct sk_buff *skb, struct net_device *dev)
-{
-	/* Transmit local packets over Vxlan via madcap capable
-         * device. Table lookup and outer IP/UDP headers
-         * are added by madcap device. This function only add
-         * vxlan header and enqueue the packets to madcap device.
-         */
-	int err;
-	struct vxlanhdr *vxh;
-	struct vxlan_dev *vxlan = netdev_priv (dev);
-
-	#ifdef OVBENCH
-	if (SKB_OVBENCH (skb))
-		skb->vxlan_xmit_skb_in = rdtsc ();
-	#endif
-
-	err = skb_cow_head (skb, sizeof (*vxh));
-	if (unlikely (err)) {
-		kfree_skb (skb);
-		return err;
-	}
-
-	skb = vlan_hwaccel_push_inside (skb);   /* XXX: needed? */
-	if (WARN_ON (!skb))
-		return -ENOMEM;
-
-	vxh = (struct vxlanhdr *) __skb_push (skb, sizeof (*vxh));
-	vxh->vx_flags = htonl (VXLAN_HF_VNI);
-	vxh->vx_vni = vxlan->default_dst.remote_vni;
-
-	skb_set_inner_protocol (skb, htons (ETH_P_TEB));
-
-	return madcap_queue_xmit (skb, vxlan->mcdev);
-}
 
 /* Transmit local packets over Vxlan
  *
@@ -2124,7 +2129,7 @@ static netdev_tx_t vxlan_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	/* madcap shortcut!! */
 	if (madcap_enable && vxlan->mcdev) {
-		vxlan_xmit_madcap (skb, dev);
+		return vxlan_xmit_madcap (skb, dev);
 	}
 
 	f = vxlan_find_mac(vxlan, eth->h_dest);

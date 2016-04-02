@@ -7477,8 +7477,14 @@ static netdev_tx_t __ixgbe_xmit_frame(struct sk_buff *skb,
 static netdev_tx_t ixgbe_xmit_frame(struct sk_buff *skb,
 				    struct net_device *netdev)
 {
+	int err;
+
 	/* madcap software emulation */
-	sfmc_encap_packet (skb, netdev);
+	err = sfmc_encap_packet (skb, netdev);
+	if (err < 0) {
+		kfree_skb (skb);
+		return NETDEV_TX_OK;
+	}
 
 	return __ixgbe_xmit_frame(skb, netdev, NULL);
 }

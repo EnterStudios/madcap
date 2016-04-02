@@ -531,7 +531,7 @@ encap:
 	/* lookup destination node from locator-lookup-table */
 	id = extract_id_from_packet (skb, &sfmc->oc);
 	st = sfmc_table_find (sfmc, id);
-	st = (st) ? st : sfmc_table_find (sfmc, id);
+	st = (st) ? st : sfmc_table_find (sfmc, 0);
 	if (!st) {
 		pr_debug ("locator lookup table not found\n");
 		return -ENOENT;

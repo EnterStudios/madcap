@@ -952,6 +952,7 @@ static int nsh_nl_cmd_path_dst_set(struct sk_buff *skb,
 	__be32 remote, local;
 	struct net *net = sock_net(skb->sk);
 	struct nsh_net *nnet = net_generic(net, nsh_net_id);
+	struct nsh_dev *ndev;
 	struct nsh_table *nt;
 	struct nsh_dst *dst;
 	struct net_device *dev, *lowerdev;
@@ -1038,6 +1039,9 @@ static int nsh_nl_cmd_path_dst_set(struct sk_buff *skb,
 				return -EINVAL;
 			}
 			dst->lowerdev = lowerdev;
+			list_for_each_entry_rcu (ndev, &nnet->dev_list, list) {
+				madcap_acquire_dev (lowerdev, ndev->dev);
+			}
 		}
 
 		nsh_add_table(nnet, key, mdtype, encap_type, NULL, dst);

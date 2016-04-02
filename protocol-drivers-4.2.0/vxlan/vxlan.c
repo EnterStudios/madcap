@@ -2685,8 +2685,10 @@ static int vxlan_newlink(struct net *src_net, struct net_device *dev,
 		}
 
 		/* check is lower dev madcap capable? */
-		if (get_madcap_ops (lowerdev))
+		if (get_madcap_ops (lowerdev)) {
 			vxlan->mcdev = lowerdev;
+			madcap_acquire_dev (lowerdev, dev);
+		}
 
 #if IS_ENABLED(CONFIG_IPV6)
 		if (use_ipv6) {

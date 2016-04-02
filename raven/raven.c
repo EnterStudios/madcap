@@ -41,9 +41,9 @@ static int drop_mode __read_mostly = 0;
 module_param_named (drop_mode, drop_mode, int, 0444);
 MODULE_PARM_DESC (drop_mode, "if 1, tx packet is dropped immediately.");
 
-static int madcap_mode __read_mostly = 0;
-module_param_named (madcap_mode, madcap_mode, int, 0444);
-MODULE_PARM_DESC (madcap_mode, "if 1, raven_proc_read returns TX path clock "
+static int madcap_enable __read_mostly = 0;
+module_param_named (madcap_enable, madcap_enable, int, 0444);
+MODULE_PARM_DESC (madcap_enable, "if 1, raven_proc_read returns TX path clock "
 		  "on madcap/raven offloaded version.");
 
 static u32 raven_salt __read_mostly;
@@ -381,7 +381,7 @@ raven_proc_read_madcap_enabled (struct file *fp, char __user *buf,
 static ssize_t
 raven_proc_read (struct file *fp, char __user *buf, size_t size, loff_t *off)
 {
-	if (madcap_mode)
+	if (madcap_enable)
 		return raven_proc_read_madcap_enabled (fp, buf, size, off);
 	else
 		return raven_proc_read_madcap_disabled (fp, buf, size, off);
@@ -961,7 +961,7 @@ raven_init_module (void)
 
 	if (drop_mode)
 		pr_info ("drop mode on");
-	if (madcap_mode)
+	if (madcap_enable)
 		pr_info ("madcap mode on");
 
 	return 0;

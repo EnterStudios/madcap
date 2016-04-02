@@ -1,0 +1,10 @@
+
+170.891414 main [2257] interface is p2p1
+170.891455 main [2226] invalid frags 70 [1..63], ignore
+170.891485 main [2377] running on 1 cpus (have 6)
+170.891761 extract_ip_range [365] range is 10.0.0.1:0 to 10.0.0.1:0
+170.891769 extract_ip_range [365] range is 10.1.0.1:0 to 10.1.0.1:0
+171.477662 main [2478] mapped 334980KB at 0x7fde29157000
+Receiving from netmap:p2p1: 6 queues, 1 threads and 1 cpus.
+171.477753 main [2577] Wait 2 secs for phy reset
+^C^C

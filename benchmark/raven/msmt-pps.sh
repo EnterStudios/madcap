@@ -1,6 +1,6 @@
 #!/bin/sh
 
-outputdir=result-raven-pps-wo-mc
+outputdir=result-raven-pps-w-mc
 
 interface=r0
 ndgproc=/proc/driver/netdevgen

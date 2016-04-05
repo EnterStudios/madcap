@@ -84,6 +84,7 @@ static atomic_t start;
 static struct sk_buff *
 netdevgen_build_packet (void)
 {
+	int datalen;
 	struct sk_buff * skb;
 	struct iphdr * ip;
 	struct udphdr * udp;
@@ -97,11 +98,18 @@ netdevgen_build_packet (void)
 	}
 
 	/* alloc and build skb */
-	skb = alloc_skb_fclone ((pktlen + 14), GFP_KERNEL);
+
+	datalen = pktlen + 14; /* inner ethernet frame */
+	datalen += 14 + 20 + 8 + 8 + 8; /* outer eth, ip, udp, vxlan, nsh */
+
+	skb = alloc_skb_fclone (datalen, GFP_KERNEL);
+	prefetchw (skb->data);
+	skb_reserve (skb, datalen);
 	skb->protocol = htons (ETH_P_IP);
 	skb_put (skb, pktlen);
 	skb_set_network_header (skb, 0);
 	skb_set_transport_header (skb, sizeof (*ip));
+	skb->pkt_type = PACKET_HOST;
 
 	memset(IPCB(skb), 0, sizeof(*IPCB(skb)));
 
@@ -141,6 +149,9 @@ netdevgen_build_packet (void)
 	}
 	skb_dst_drop (skb);
 	skb_dst_set (skb, &rt->dst);
+	skb->dev = rt->dst.dev;
+	skb->ip_summed = CHECKSUM_NONE;
+	skb->csum = 0;
 
 #ifdef OVBENCH
 	skb->ovbench_encaped = 0;

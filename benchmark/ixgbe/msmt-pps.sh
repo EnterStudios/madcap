@@ -25,7 +25,7 @@ sudo rmmod netdevgen
 
 
 for pktlen in 50 114 242 498 1010 1486; do
-#for pktlen in 114 1010; do
+#for pktlen in 50; do
 
 	sleep 1
 	sudo insmod $netdevgen measure_pps=1 pktlen="$pktlen"

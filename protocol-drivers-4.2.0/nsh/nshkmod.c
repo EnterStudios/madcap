@@ -413,7 +413,7 @@ static int nsh_xmit_vxlan_skb(struct socket *sock, struct net * net,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION (4, 2, 0)
 	return udp_tunnel_xmit_skb(rt, sock->sk, skb, src, dst, 0,
 				   NSH_VXLAN_TTL, 0, src_port, dst_port,
-				   false, 0);
+				   false, true);
 #else
 	return udp_tunnel_xmit_skb(sock, rt, skb, src, dst, 0, NSH_VXLAN_TTL,
 				   0, src_port, dst_port, net);

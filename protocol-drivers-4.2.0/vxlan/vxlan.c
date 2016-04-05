@@ -53,6 +53,10 @@
 /* madcapable version */
 #include <madcap.h>
 
+#ifdef OVBENCH
+#include <linux/ovbench.h>
+#endif
+
 static int madcap_enable __read_mostly = 0;
 module_param_named (madcap_enable, madcap_enable, int, 0444);
 MODULE_PARM_DESC (madcap_enable, "if 1, madcap offload is enabled.");
@@ -1775,10 +1779,10 @@ static int vxlan_xmit_madcap (struct sk_buff *skb, struct net_device *dev)
 	struct vxlanhdr *vxh;
 	struct vxlan_dev *vxlan = netdev_priv (dev);
 
-	#ifdef OVBENCH
+#ifdef OVBENCH
 	if (SKB_OVBENCH (skb))
 		skb->vxlan_xmit_skb_in = rdtsc ();
-	#endif
+#endif
 
 	err = skb_cow_head (skb, VXLAN_HEADROOM + ETH_HLEN);
 	if (unlikely (err)) {
@@ -1814,6 +1818,11 @@ int vxlan_xmit_skb(struct rtable *rt, struct sock *sk, struct sk_buff *skb,
 	bool udp_sum = !!(vxflags & VXLAN_F_UDP_CSUM);
 	int type = udp_sum ? SKB_GSO_UDP_TUNNEL_CSUM : SKB_GSO_UDP_TUNNEL;
 	u16 hdrlen = sizeof(struct vxlanhdr);
+
+#ifdef OVBENCH
+	if (SKB_OVBENCH (skb))
+		skb->vxlan_xmit_skb_in = rdtsc ();
+#endif
 
 	if ((vxflags & VXLAN_F_REMCSUM_TX) &&
 	    skb->ip_summed == CHECKSUM_PARTIAL) {
@@ -1939,6 +1948,11 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 	__u8 tos, ttl;
 	int err;
 
+#ifdef OVBENCH
+	if (SKB_OVBENCH (skb))
+		skb->vxlan_xmit_one_in = rdtsc ();
+#endif
+
 	dst_port = rdst->remote_port ? rdst->remote_port : vxlan->dst_port;
 	vni = rdst->remote_vni;
 	dst = &rdst->remote_ip;
@@ -1966,6 +1980,13 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 				     vxlan->port_max, true);
 
 	if (dst->sa.sa_family == AF_INET) {
+
+#ifdef OVBENCH
+		if (SKB_OVBENCH (skb))
+			skb->ip_routing_start = rdtsc ();
+#endif
+
+
 		memset(&fl4, 0, sizeof(fl4));
 		fl4.flowi4_oif = rdst->remote_ifindex;
 		fl4.flowi4_tos = RT_TOS(tos);
@@ -1988,6 +2009,11 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
 			dev->stats.collisions++;
 			goto rt_tx_error;
 		}
+
+#ifdef OVBENCH
+		if (SKB_OVBENCH (skb))
+			skb->ip_routing_end = rdtsc ();
+#endif
 
 		/* Bypass encapsulation if the destination is local */
 		if (rt->rt_flags & RTCF_LOCAL &&
@@ -2107,6 +2133,12 @@ static netdev_tx_t vxlan_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	skb_reset_mac_header(skb);
 	eth = eth_hdr(skb);
+
+#ifdef OVBENCH
+	if (SKB_OVBENCH (skb)) {
+		skb->vxlan_xmit_in = rdtsc ();
+	}
+#endif
 
 	if ((vxlan->flags & VXLAN_F_PROXY)) {
 		if (ntohs(eth->h_proto) == ETH_P_ARP)

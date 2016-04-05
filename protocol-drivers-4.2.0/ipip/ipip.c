@@ -1,3 +1,4 @@
+
 /*
  *	Linux NET3:	IP/IP protocol decoder.
  *
@@ -124,6 +125,10 @@ static int madcap_enable __read_mostly = 0;
 module_param_named (madcap_enable, madcap_enable, int, 0444);
 MODULE_PARM_DESC (madcap_enable, "if 1, madcap offload is enabled.");
 
+#ifdef OVBENCH
+#include <linux/ovbench.h>
+#endif
+
 static bool log_ecn_error = true;
 module_param(log_ecn_error, bool, 0644);
 MODULE_PARM_DESC(log_ecn_error, "Log packets received with corrupted ECN");
@@ -224,6 +229,12 @@ static netdev_tx_t ipip_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct ip_tunnel *tunnel = netdev_priv(dev);
 	const struct iphdr  *tiph = &tunnel->parms.iph;
 	struct net_device *mcdev;	/* madcap device */
+
+#ifdef OVBENCH
+	if (SKB_OVBENCH (skb)) {
+		skb->ipip_tunnel_xmit_in = rdtsc ();
+	}
+#endif
 
 	if (unlikely(skb->protocol != htons(ETH_P_IP)))
 		goto tx_error;

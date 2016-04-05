@@ -11,6 +11,7 @@
 #include <net/net_namespace.h>
 #include <net/rtnetlink.h>
 #include <net/ip_tunnels.h>
+#include <linux/proc_fs.h>
 
 #include <madcap.h>
 #include <raven.h>
@@ -88,7 +89,7 @@ static __u64	ovbench_timestamp[OVBENCH_TIMESTAMPNUM];
 
 static int	proc_red = 0;	/* first read, 0. then 1. */
 
-#define ts(start, end) (end - start)
+#define ts(start, end) start > end ? 0 : end - start
 
 static inline void
 copy_ovbench_params (struct sk_buff *skb, struct raven_dev *rdev)

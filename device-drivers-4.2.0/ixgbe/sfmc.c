@@ -11,6 +11,27 @@
 
 #include "sfmc.h"
 
+/* XXX: IP routing table and arp table (and sync using switchdev)
+ * should be ommitted. madcap NIC does not have to have IP routing and
+ * arp table functionalities.
+ *
+ * When madcap entry is added, lookup gateway for the destination from
+ * kernel routing table (using ip_route_output_key) and find gateway
+ * MAC address from kernel ARP table, and remenber dst MAC for the ID
+ * of the entry.
+ *
+ * This means, protocol independent overlay FIB.
+ * key is protocol independent floating ID,
+ * entry is outer IP and Ethernet header parameters.
+ * 1 entry : [ id 0xXX -> dst ip, dst mac, and outer parameters ].
+ *
+ * As a result of this FIB, second outer IP routing lookup (LPM) is
+ * completely avoided. In current this software madcap implementation,
+ * This FIB entry for an ID is filled up when first packet is
+ * transmited (in sfmc_encap_packet()).
+ */
+
+
 /* For ixgbe */
 #include "ixgbe.h"
 #define SFMC_NETDEV_PRIV       ixgbe_adapter
@@ -38,6 +59,7 @@ struct sfmc_table {
 	unsigned long		updated;
 
 	struct madcap_obj_entry	oe;
+	struct sfmc_fib 	*fib;
 };
 
 
@@ -252,6 +274,8 @@ sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway,
 static void
 sfmc_fib_delete (struct sfmc_fib *sf)
 {
+	unsigined int n;
+
 	if (!sf)
 		return;
 
@@ -260,6 +284,17 @@ sfmc_fib_delete (struct sfmc_fib *sf)
 
 	patricia_remove (sf->sfmc->fib_tree, sf->pn);
 	list_del_rcu (&sf->list);
+
+	/* XXX: before free, set all sfmc_table->fib pointers that
+	 * point this fib entry to NULL. */
+
+	for (n = 0; n < SFMC_HASH_SIZE; n++) {
+		hlist_for_each_entry_rcu (st, &sfmc->sfmc_table[n], hlist) {
+			if (st->fib == sf)
+				st->fib = NULL;
+		}
+	}
+
 	kfree_rcu (sf, rcu);
 }
 
@@ -528,7 +563,7 @@ sfmc_encap_packet (struct sk_buff *skb, struct net_device *dev)
 
 encap:
 
-	/* lookup destination node from locator-lookup-table */
+	/* lookup destination node and FIB entry from locator-lookup-table */
 	id = extract_id_from_packet (skb, &sfmc->oc);
 	st = sfmc_table_find (sfmc, id);
 	st = (st) ? st : sfmc_table_find (sfmc, 0);
@@ -537,12 +572,18 @@ encap:
 		return -ENOENT;
 	}
 
-	/* lookup ipv4 route and neighbour for dst node */
-	sf = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
-	if (!sf) {
-		pr_debug ("no fib entry for %pI4", &st->oe.dst);
-		return -ENOENT;
+	/* add outer ip and ehternet header. */
+	if (!st->fib) {
+		/* check FIB entry is completed for this id? */
+		st->fib = sfmc_fib_find_best (sfmc, st->oe.dst, 32);
+		if (!st->fib) {
+			pr_debug ("no fib entry for %pI4", &st->oe.dst);
+			return -ENOENT;
+		}
 	}
+
+	sf = st->fib;
+
 	if (sf->scope == RT_SCOPE_LINK && sf->gateway != st->oe.dst) {
 		/* this is connected route. add host route and wait
 		 * for neighbor resolution */

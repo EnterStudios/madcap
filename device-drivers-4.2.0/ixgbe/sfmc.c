@@ -274,7 +274,9 @@ sfmc_fib_add (struct sfmc *sfmc, __be32 network, u8 len, __be32 gateway,
 static void
 sfmc_fib_delete (struct sfmc_fib *sf)
 {
-	unsigined int n;
+	unsigned int n;
+	struct sfmc *sfmc = sf->sfmc;
+	struct sfmc_table *st;
 
 	if (!sf)
 		return;

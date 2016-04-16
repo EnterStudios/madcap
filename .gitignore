@@ -14,3 +14,6 @@ core
 setup.sh
 refresh.sh
 e1000-reset.sh
+
+hoge.sh
+huga.sh

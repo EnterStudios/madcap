@@ -12,20 +12,18 @@ pktgen_path=/home/upa/work/netmap/examples/pkt-gen
 pktgen_intf=p2p1
 pktgen_cont=60
 
-madcap=$1
-outputdir=$2
-
-if [ "$outputdir" = "" ]; then
-	echo "\"$0 {0|1} RESULTDIR\""
-	exit
+protocol="$1"
+if [ "$protocol" = "" ]; then
+        echo "\"$0 {noencap|ipip|gre|gretap|vxlan|nsh} [OUTPUTDIR]\""
+        exit
 fi
 
+outputdir=$2
+if [ "$outputdir" = "" ]; then
+        echo output to stdout
+fi
 
 sudo rmmod netdevgen
-
-for protocol in noencap ipip gre gretap vxlan nsh; do
-
-	./setup-raven.sh $protocol $madcap
 
 for pktlen in 50 114 242 498 1010 1486; do
 
@@ -39,16 +37,21 @@ for pktlen in 50 114 242 498 1010 1486; do
 
 	fpktlen=`expr $pktlen + 14`
 	file=$outputdir/result-$fpktlen-$protocol.txt
-	echo outputfile is $file
+	
+	if [ ! "$outputdir" = "" ]; then
+		echo outputfile is $file
+	fi
 
 	for n in `seq $pktgen_cont`; do
-		ifdata -pops $interface >> $file
-		#ifdata -pops $interface 
+		if [ "$outputdir" = "" ]; then
+			ifdata -pops $interface 
+		else
+			ifdata -pops $interface >> $file
+		fi
 	done
 
 	echo stop > $ndgproc
 	sleep 1
 	sudo rmmod netdevgen
 
-done
 done

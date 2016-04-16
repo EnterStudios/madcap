@@ -1,90 +1,90 @@
-735.594966 main [2257] interface is p2p1
-735.595032 main [2226] invalid frags 70 [1..63], ignore
-735.595073 main [2377] running on 1 cpus (have 6)
-735.595417 extract_ip_range [365] range is 10.0.0.1:0 to 10.0.0.1:0
-735.595444 extract_ip_range [365] range is 10.1.0.1:0 to 10.1.0.1:0
-736.193664 main [2478] mapped 334980KB at 0x7f271e3a8000
+177.151272 main [2257] interface is p2p1
+177.151329 main [2226] invalid frags 70 [1..63], ignore
+177.151367 main [2377] running on 1 cpus (have 6)
+177.151723 extract_ip_range [365] range is 10.0.0.1:0 to 10.0.0.1:0
+177.151734 extract_ip_range [365] range is 10.1.0.1:0 to 10.1.0.1:0
+177.753663 main [2478] mapped 334980KB at 0x7efc1399a000
 Receiving from netmap:p2p1: 6 queues, 1 threads and 1 cpus.
-736.193764 main [2577] Wait 2 secs for phy reset
-738.193848 main [2579] Ready...
-738.193993 receiver_body [1377] reading from netmap:p2p1 fd 3 main_fd 3
-0.000 pps (0.000 pkts 0.000 bps in 1001038 usec) c=70
-739.195066 receiver_body [1384] waiting for initial packets, poll returns 0 0
-0.000 pps (0.000 pkts 0.000 bps in 1001051 usec) c=69
-740.196119 receiver_body [1384] waiting for initial packets, poll returns 0 0
-0.000 pps (0.000 pkts 0.000 bps in 1001053 usec) c=68
-741.197176 receiver_body [1384] waiting for initial packets, poll returns 0 0
-0.000 pps (0.000 pkts 0.000 bps in 1001053 usec) c=67
-742.198247 receiver_body [1384] waiting for initial packets, poll returns 0 0
-0.000 pps (0.000 pkts 0.000 bps in 1001063 usec) c=66
-743.199314 receiver_body [1384] waiting for initial packets, poll returns 0 0
-0.000 pps (0.000 pkts 0.000 bps in 1001046 usec) c=65
-744.200366 receiver_body [1384] waiting for initial packets, poll returns 0 0
-30.724 Kpps (30.757 Kpkts 122.536 Mbps in 1001062 usec) c=64
-2.159 Mpps (2.161 Mpkts 8.611 Gbps in 1001066 usec) c=63
-2.380 Mpps (2.383 Mpkts 9.492 Gbps in 1001039 usec) c=62
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001025 usec) c=61
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001023 usec) c=60
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001028 usec) c=59
-2.288 Mpps (2.291 Mpkts 9.125 Gbps in 1001035 usec) c=58
-2.333 Mpps (2.335 Mpkts 9.302 Gbps in 1001041 usec) c=57
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=56
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001025 usec) c=55
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001025 usec) c=54
-2.140 Mpps (2.142 Mpkts 8.535 Gbps in 1001054 usec) c=53
-2.368 Mpps (2.370 Mpkts 9.442 Gbps in 1001033 usec) c=52
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=51
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001024 usec) c=50
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=49
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=48
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=47
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001026 usec) c=46
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=45
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001020 usec) c=44
-2.225 Mpps (2.227 Mpkts 8.874 Gbps in 1001031 usec) c=43
-2.334 Mpps (2.337 Mpkts 9.309 Gbps in 1001040 usec) c=42
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001022 usec) c=41
-2.392 Mpps (2.394 Mpkts 9.538 Gbps in 1001043 usec) c=40
-2.277 Mpps (2.279 Mpkts 9.080 Gbps in 1001051 usec) c=39
-2.277 Mpps (2.279 Mpkts 9.080 Gbps in 1001049 usec) c=38
-2.278 Mpps (2.281 Mpkts 9.087 Gbps in 1001060 usec) c=37
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001037 usec) c=36
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001022 usec) c=35
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001026 usec) c=34
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=33
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001024 usec) c=32
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001027 usec) c=31
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001027 usec) c=30
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001028 usec) c=29
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001020 usec) c=28
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001025 usec) c=27
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001026 usec) c=26
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001020 usec) c=25
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001025 usec) c=24
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001029 usec) c=23
-2.348 Mpps (2.350 Mpkts 9.363 Gbps in 1001050 usec) c=22
-2.194 Mpps (2.196 Mpkts 8.750 Gbps in 1001058 usec) c=21
-2.279 Mpps (2.281 Mpkts 9.088 Gbps in 1001059 usec) c=20
-2.279 Mpps (2.281 Mpkts 9.087 Gbps in 1001044 usec) c=19
-2.279 Mpps (2.281 Mpkts 9.089 Gbps in 1001048 usec) c=18
-2.275 Mpps (2.278 Mpkts 9.074 Gbps in 1001052 usec) c=17
-2.378 Mpps (2.381 Mpkts 9.486 Gbps in 1001039 usec) c=16
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=15
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001026 usec) c=14
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=13
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001021 usec) c=12
-2.302 Mpps (2.304 Mpkts 9.180 Gbps in 1001033 usec) c=11
-2.266 Mpps (2.269 Mpkts 9.039 Gbps in 1001066 usec) c=10
-2.229 Mpps (2.232 Mpkts 8.892 Gbps in 1001070 usec) c=9
-2.333 Mpps (2.335 Mpkts 9.304 Gbps in 1001034 usec) c=8
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001024 usec) c=7
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001025 usec) c=6
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001027 usec) c=5
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001024 usec) c=4
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001020 usec) c=3
-2.395 Mpps (2.397 Mpkts 9.550 Gbps in 1001026 usec) c=2
-2.204 Mpps (2.206 Mpkts 8.789 Gbps in 1001028 usec) c=1
-808.266388 sigint_h [402] received control-C on thread 0x7f27334ca740
-809.267415 main_thread [2036] 80.000 pps (80.000 pkts 318.720 Kbps in 1001057 usec) 4.44 avg_batch 502 min_space
-Received 148389499 packets 73897970502 bytes 45569312 events 498 bytes each in 63.09 seconds.
-Speed: 2.352 Mpps Bandwidth: 9.370 Gbps (raw 9.822 Gbps). Average batch: 3.26 pkts
+177.753752 main [2577] Wait 2 secs for phy reset
+179.753838 main [2579] Ready...
+179.753986 receiver_body [1377] reading from netmap:p2p1 fd 3 main_fd 3
+0.000 pps (0.000 pkts 0.000 bps in 1001021 usec) c=70
+180.755063 receiver_body [1384] waiting for initial packets, poll returns 0 0
+0.000 pps (0.000 pkts 0.000 bps in 1001040 usec) c=69
+181.756116 receiver_body [1384] waiting for initial packets, poll returns 0 0
+0.000 pps (0.000 pkts 0.000 bps in 1001047 usec) c=68
+182.757162 receiver_body [1384] waiting for initial packets, poll returns 0 0
+0.000 pps (0.000 pkts 0.000 bps in 1001043 usec) c=67
+183.758207 receiver_body [1384] waiting for initial packets, poll returns 0 0
+0.000 pps (0.000 pkts 0.000 bps in 1001047 usec) c=66
+184.759266 receiver_body [1384] waiting for initial packets, poll returns 0 0
+0.000 pps (0.000 pkts 0.000 bps in 1001045 usec) c=65
+185.760326 receiver_body [1384] waiting for initial packets, poll returns 0 0
+52.589 Kpps (52.645 Kpkts 224.057 Mbps in 1001059 usec) c=64
+1.674 Mpps (1.676 Mpkts 7.131 Gbps in 1001059 usec) c=63
+1.674 Mpps (1.676 Mpkts 7.133 Gbps in 1001039 usec) c=62
+1.674 Mpps (1.675 Mpkts 7.131 Gbps in 1001018 usec) c=61
+1.674 Mpps (1.675 Mpkts 7.130 Gbps in 1001020 usec) c=60
+1.674 Mpps (1.676 Mpkts 7.131 Gbps in 1001020 usec) c=59
+1.674 Mpps (1.676 Mpkts 7.133 Gbps in 1001024 usec) c=58
+1.674 Mpps (1.675 Mpkts 7.130 Gbps in 1001020 usec) c=57
+1.674 Mpps (1.676 Mpkts 7.132 Gbps in 1001040 usec) c=56
+1.674 Mpps (1.676 Mpkts 7.132 Gbps in 1001046 usec) c=55
+1.674 Mpps (1.676 Mpkts 7.134 Gbps in 1001046 usec) c=54
+1.674 Mpps (1.676 Mpkts 7.133 Gbps in 1001057 usec) c=53
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001059 usec) c=52
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001063 usec) c=51
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001065 usec) c=50
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001054 usec) c=49
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001064 usec) c=48
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001062 usec) c=47
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001056 usec) c=46
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001064 usec) c=45
+1.675 Mpps (1.676 Mpkts 7.135 Gbps in 1001059 usec) c=44
+1.674 Mpps (1.676 Mpkts 7.133 Gbps in 1001059 usec) c=43
+1.675 Mpps (1.677 Mpkts 7.135 Gbps in 1001065 usec) c=42
+1.674 Mpps (1.676 Mpkts 7.132 Gbps in 1001075 usec) c=41
+1.675 Mpps (1.676 Mpkts 7.133 Gbps in 1000267 usec) c=40
+1.676 Mpps (1.677 Mpkts 7.139 Gbps in 1001049 usec) c=39
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001057 usec) c=38
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001067 usec) c=37
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001051 usec) c=36
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001105 usec) c=35
+1.675 Mpps (1.676 Mpkts 7.134 Gbps in 1001064 usec) c=34
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001052 usec) c=33
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001061 usec) c=32
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001051 usec) c=31
+1.675 Mpps (1.677 Mpkts 7.135 Gbps in 1001027 usec) c=30
+1.675 Mpps (1.677 Mpkts 7.135 Gbps in 1001033 usec) c=29
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001034 usec) c=28
+1.675 Mpps (1.676 Mpkts 7.135 Gbps in 1001031 usec) c=27
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001066 usec) c=26
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001065 usec) c=25
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001067 usec) c=24
+1.674 Mpps (1.676 Mpkts 7.134 Gbps in 1001064 usec) c=23
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001066 usec) c=22
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001065 usec) c=21
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001064 usec) c=20
+1.674 Mpps (1.676 Mpkts 7.134 Gbps in 1001079 usec) c=19
+1.675 Mpps (1.676 Mpkts 7.135 Gbps in 1001062 usec) c=18
+1.674 Mpps (1.676 Mpkts 7.133 Gbps in 1001061 usec) c=17
+1.674 Mpps (1.676 Mpkts 7.131 Gbps in 1001063 usec) c=16
+1.675 Mpps (1.676 Mpkts 7.134 Gbps in 1001063 usec) c=15
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001063 usec) c=14
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001063 usec) c=13
+1.675 Mpps (1.677 Mpkts 7.135 Gbps in 1001061 usec) c=12
+1.674 Mpps (1.676 Mpkts 7.131 Gbps in 1001063 usec) c=11
+1.675 Mpps (1.676 Mpkts 7.135 Gbps in 1001063 usec) c=10
+1.675 Mpps (1.676 Mpkts 7.134 Gbps in 1001053 usec) c=9
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001053 usec) c=8
+1.675 Mpps (1.677 Mpkts 7.135 Gbps in 1001067 usec) c=7
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001051 usec) c=6
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001056 usec) c=5
+1.675 Mpps (1.677 Mpkts 7.138 Gbps in 1001054 usec) c=4
+1.675 Mpps (1.677 Mpkts 7.136 Gbps in 1001053 usec) c=3
+1.675 Mpps (1.677 Mpkts 7.137 Gbps in 1001055 usec) c=2
+1.675 Mpps (1.676 Mpkts 7.135 Gbps in 1001058 usec) c=1
+249.826927 sigint_h [402] received control-C on thread 0x7efc28abc740
+250.827962 main_thread [2036] 51.000 pps (51.000 pkts 217.056 Kbps in 1001054 usec) 2.83 avg_batch 508 min_space
+Received 105671049 packets 56216998068 bytes 14582008 events 532 bytes each in 63.10 seconds.
+Speed: 1.675 Mpps Bandwidth: 7.128 Gbps (raw 7.449 Gbps). Average batch: 7.25 pkts

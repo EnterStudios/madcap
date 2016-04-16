@@ -85,6 +85,7 @@ static struct sk_buff *
 netdevgen_build_packet (void)
 {
 	int datalen;
+	int headroom;
 	struct sk_buff * skb;
 	struct iphdr * ip;
 	struct udphdr * udp;
@@ -100,20 +101,21 @@ netdevgen_build_packet (void)
 	/* alloc and build skb */
 
 	datalen = pktlen + 14; /* inner ethernet frame */
-	datalen += 14 + 20 + 8 + 8 + 8; /* outer eth, ip, udp, vxlan, nsh */
-
+	//headroom = 14 + 14 + 20 + 8 + 8 + 8; /* outer eth, ip, udp, vxlan, nsh */
+	//headroom = 128;
+	//headroom = 64;
+	
 	skb = alloc_skb_fclone (datalen, GFP_KERNEL);
-	prefetchw (skb->data);
-	skb_reserve (skb, datalen);
-	skb->protocol = htons (ETH_P_IP);
-	skb_put (skb, pktlen);
-	skb_set_network_header (skb, 0);
-	skb_set_transport_header (skb, sizeof (*ip));
-	skb->pkt_type = PACKET_HOST;
+	//prefetchw (skb->data);
+
+	//skb_reserve (skb, headroom);
+
+	pr_info ("headroom size is %d", skb_headroom (skb));
 
 	memset(IPCB(skb), 0, sizeof(*IPCB(skb)));
 
-	ip = (struct iphdr *) skb_network_header (skb);
+	skb_set_network_header (skb, skb->len);
+	ip = (struct iphdr *) skb_put (skb, sizeof (*ip));;
 	ip->ihl		= 5;
 	ip->version	= 4;
 	ip->tos		= 0;
@@ -126,11 +128,19 @@ netdevgen_build_packet (void)
 	ip->saddr	= srcip;
 	ip->daddr	= dstip;
 
-	udp = (struct udphdr *) skb_transport_header (skb);
+	pr_info ("dst %pI4 src %pI4", &dstip, &srcip);
+
+	skb_set_transport_header (skb, skb->len);
+	udp = (struct udphdr *) skb_put (skb, sizeof (*udp));
 	udp->check	= 0;
-	udp->source	= 0;
-	udp->dest	= 0;
+	udp->source	= htons (6550);
+	udp->dest	= htons (6550);
 	udp->len	= htons (pktlen - sizeof (*ip));
+
+
+	// payload
+	skb_put (skb, pktlen - (sizeof (*ip) + sizeof (*udp)));
+
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION (4, 2, 0)
 	__ip_select_ident(get_net_ns_by_pid (1),
@@ -150,8 +160,11 @@ netdevgen_build_packet (void)
 	skb_dst_drop (skb);
 	skb_dst_set (skb, &rt->dst);
 	skb->dev = rt->dst.dev;
+	skb->pkt_type = PACKET_HOST;
 	skb->ip_summed = CHECKSUM_NONE;
 	skb->csum = 0;
+	skb->protocol = htons (ETH_P_IP);
+
 
 #ifdef OVBENCH
 	skb->ovbench_encaped = 0;

@@ -345,6 +345,8 @@ sfmc_acquire_dev (struct net_device *dev, struct net_device *vdev)
 	for (n = 0; n < SFMC_VDEV_MAX; n++) {
 		if (sfmc->vdev[n] == NULL) {
 			sfmc->vdev[n] = vdev;
+			pr_info ("%s is acquired by %s",
+				 dev->name, vdev->name);
 			return 0;
 		}
 	}

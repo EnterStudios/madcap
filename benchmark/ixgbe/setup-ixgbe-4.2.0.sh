@@ -15,7 +15,7 @@ fi
 
 madcap_mode="madcap_enable=$mc"
 
-dev=p1p1
+dev=eth1
 
 madcap=~/work/madcap/madcap/madcap.ko
 ixgbe=~/work/madcap/device-drivers-4.2.0/ixgbe/ixgbe.ko
@@ -74,6 +74,9 @@ $s insmod $vxlan $madcap_mode	# ixgbe needs vxlan
 $s insmod $ixgbe $madcap_mode
 
 echo setup ixgbe $dev
+$s /sbin/ethtool -A $dev rx off tx off
+$s /sbin/ethtool -K $dev tso off gso off sg off gro off lro off
+$s /sbin/ethtool -K $dev tx off rx off
 $s ifconfig $dev up
 $s ifconfig $dev mtu 9216
 $s ifconfig $dev $raw_srcip/24
@@ -90,7 +93,8 @@ case $protocol in
 	ipip)
 	echo ipip mode.
 	echo load modules
-	$s modprobe ip_tunnel tunnel4
+	$s modprobe ip_tunnel 
+	$s modprobe tunnel4
 	$s insmod $ipip $madcap_mode
 
 	echo setup madcap
@@ -98,8 +102,9 @@ case $protocol in
 	$s $ip madcap add dev $dev id 0 dst $raw_dstip
 
 	echo setup ipip dev
-	$s ip tunnel add ipip1 mode ipip remote $raw_dstip local $raw_srcip \
+	$s ip link add name ipip1 type ipip remote $raw_dstip local $raw_srcip \
 	dev $dev
+	
 	$s ifconfig ipip1 up
 	$s ifconfig ipip1 $ipip_srcip/24
 
@@ -118,7 +123,9 @@ case $protocol in
 	$s $ip madcap add dev $dev id 0 dst $raw_dstip
 
 	echo setup gre dev
-	$s ip tunnel add gre1 mode gre remote $raw_dstip local $raw_srcip \
+	#$s ip tunnel add gre1 mode gre remote $raw_dstip local $raw_srcip \
+	#dev $dev
+	$s ip link add name gre1 type gre remote $raw_dstip local $raw_srcip \
 	dev $dev
 	$s ifconfig gre1 up
 	$s ifconfig gre1 $gre_srcip/24

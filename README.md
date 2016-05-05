@@ -12,6 +12,6 @@
 On linux kernel 4.2.0,
 
 1. `clone https://github.com/upa/mdacap.git`
-2. `cd madcap@
+2. `cd madcap`
 3. `make`; then all programs, madcap API, protocol and device drivers and traffic generator(netdevgen) are compiled.
-4. If on the modified linux kernel 4.2.0 (https://github.com/upa/linux-madcap-msmt), `make OVBENCH=yes` generate skbuff timestamping version raven, netdevgen and tunnel drivers.
+4. If in the modified linux kernel 4.2.0 (https://github.com/upa/linux-madcap-msmt), `make OVBENCH=yes` generate skbuff timestamping version raven, netdevgen and tunnel drivers.
